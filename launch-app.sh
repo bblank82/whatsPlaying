@@ -6,7 +6,8 @@
 # Ensure Homebrew and system tools are on PATH (not inherited by .app bundles)
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-APP_DIR="$(dirname "$0")"
+RESOURCES_DIR="$(dirname "$0")"
+APP_DIR="$RESOURCES_DIR/appletv-monitor"
 cd "$APP_DIR"
 
 alert() {
@@ -43,8 +44,10 @@ if [ ! -f "backend/.venv/bin/python" ]; then
     }
 fi
 
+LOG="$APP_DIR/server.log"
+
 # Open the browser after a short delay to let the server start
 (sleep 3 && open "http://localhost:8000") &
 
 # Start the backend (which serves the pre-built frontend)
-cd backend && source .venv/bin/activate && exec python main.py
+cd backend && exec .venv/bin/python3 main.py >> "$LOG" 2>&1
