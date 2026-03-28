@@ -9,11 +9,21 @@ import { parseHuluTitle, parsePlexTitle, detectPlexSeries, isGenericVideoTitle, 
 // Device icon
 // ---------------------------------------------------------------------------
 
-function DeviceIcon({ model, name, dim }: { model: string; name: string; dim: boolean }) {
+function DeviceIcon({ model, deviceType, name, dim }: { model: string; deviceType?: string; name: string; dim: boolean }) {
   const c = dim ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.7)';
   const c2 = dim ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.35)';
   const m = model.toLowerCase();
   const isATV = m.includes('gen4') || m.includes('appletv');
+
+  if (deviceType === 'kaleidescape') {
+    return (
+      <img
+        src="/kaleidescape-logo.svg"
+        alt="Kaleidescape"
+        style={{ width: 72, height: 38, objectFit: 'contain', opacity: dim ? 0.3 : 0.9 }}
+      />
+    );
+  }
 
   if (isATV) {
     return (
@@ -149,10 +159,13 @@ function ScoresRow({ scores }: { scores: ScoreState }) {
 interface Props {
   device: DeviceStatus;
   onPair: (id: string) => void;
+  kioskActive?: boolean;
+  kioskOrientation?: 'landscape' | 'portrait';
 }
 
-export function DeviceCard({ device, onPair }: Props) {
-  const { identifier, name, hostname, model, connected, power, now_playing } = device;
+export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientation = 'landscape' }: Props) {
+  const { identifier, name, hostname, model, device_type, connected, power, now_playing } = device;
+  const isKaleidescape = device_type === 'kaleidescape';
   const isOn = power?.toLowerCase().includes('on');
 
   // Optimistic playback state
@@ -306,9 +319,12 @@ export function DeviceCard({ device, onPair }: Props) {
     await fetch(`/api/devices/${encodeURIComponent(identifier)}/control/${action}`, { method: 'POST' });
   }
 
+  // Kaleidescape serves its own cover art directly — use that as fallback before pyatv artwork
+  const kscapeCoverUrl = now_playing?.kscape_cover_url ?? null;
+
   // Suppress pyatv artwork while TMDB is in-flight for video content — avoids the
   // flash of wrong art before the poster loads.
-  const artworkFallback = (isVideo && !tmdbResolved) ? null : artworkUrl;
+  const artworkFallback = (isVideo && !tmdbResolved) ? null : (kscapeCoverUrl ?? artworkUrl);
   const cardArtworkSrc      = tmdbPosterUrl ?? ytThumbUrl ?? artworkFallback;
   const artworkFullscreenSrc = tmdbFullsizeUrl ?? ytThumbUrl ?? artworkFallback;
 
@@ -364,21 +380,23 @@ export function DeviceCard({ device, onPair }: Props) {
                   <path d="M6.5 5A9 9 0 1 0 17.5 5"/>
                 </svg>
               </button>
-              <button
-                onClick={() => onPair(identifier)}
-                title="Pair additional protocols"
-                style={{
-                  width: 22, height: 22, borderRadius: 6,
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" strokeLinecap="round">
-                  <path d="M12 5v14M5 12h14"/>
-                </svg>
-              </button>
+              {!isKaleidescape && (
+                <button
+                  onClick={() => onPair(identifier)}
+                  title="Pair additional protocols"
+                  style={{
+                    width: 22, height: 22, borderRadius: 6,
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M12 5v14M5 12h14"/>
+                  </svg>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -415,7 +433,7 @@ export function DeviceCard({ device, onPair }: Props) {
                   ) : (isPlaying || isPaused) && appIconUrl ? (
                     <img src={appIconUrl} alt="" style={{ width: 80, height: 80, objectFit: 'cover', display: 'block' }} />
                   ) : (
-                    <DeviceIcon model={model ?? 'Unknown'} name={name} dim={!connected} />
+                    <DeviceIcon model={model ?? 'Unknown'} deviceType={device_type} name={name} dim={!connected} />
                   )}
                 </div>
 
@@ -472,40 +490,54 @@ export function DeviceCard({ device, onPair }: Props) {
                   </div>
                 )}
 
-                {/* Remote button — always shown when connected */}
-                <button
-                  onClick={() => setShowRemote(true)}
-                  title="Open remote"
-                  style={{
-                    width: 38, height: 38, borderRadius: 10,
-                    background: 'rgba(255,255,255,0.07)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'rgba(255,255,255,0.5)', cursor: 'pointer',
-                  }}
-                >
-                  <RemoteIcon />
-                </button>
+                {/* App icon + remote button (remote hidden for Kaleidescape) */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {isActive && appIconUrl && (
+                    <img
+                      src={appIconUrl}
+                      alt={now_playing?.app_name ?? ''}
+                      title={now_playing?.app_name ?? undefined}
+                      style={{ width: 28, height: 28, borderRadius: 7, display: 'block', flexShrink: 0 }}
+                    />
+                  )}
+                  <button
+                    onClick={() => setShowRemote(true)}
+                    title="Open remote"
+                    style={{
+                      width: 38, height: 38, borderRadius: 10,
+                      background: 'rgba(255,255,255,0.07)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: 'rgba(255,255,255,0.5)', cursor: 'pointer',
+                    }}
+                  >
+                    <RemoteIcon />
+                  </button>
+                </div>
               </div>
             </>
           ) : (
             /* Not connected / not paired */
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <DeviceIcon model={model ?? 'Unknown'} name={name} dim />
-                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>Not paired</p>
+                <DeviceIcon model={model ?? 'Unknown'} deviceType={device_type} name={name} dim />
+                <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>
+                  {isKaleidescape ? 'Disconnected' : 'Not paired'}
+                </p>
               </div>
-              <button
-                onClick={() => onPair(identifier)}
-                style={{
-                  fontSize: 14, fontWeight: 600, color: '#0A84FF',
-                  background: 'rgba(10,132,255,0.12)',
-                  border: '1px solid rgba(10,132,255,0.25)',
-                  borderRadius: 10, padding: '8px 18px', cursor: 'pointer',
-                }}
-              >
-                Pair
-              </button>
+              {!isKaleidescape && (
+                <button
+                  onClick={() => onPair(identifier)}
+                  style={{
+                    fontSize: 14, fontWeight: 600, color: '#0A84FF',
+                    background: 'rgba(10,132,255,0.12)',
+                    border: '1px solid rgba(10,132,255,0.25)',
+                    borderRadius: 10, padding: '8px 18px', cursor: 'pointer',
+                  }}
+                >
+                  Pair
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -514,14 +546,15 @@ export function DeviceCard({ device, onPair }: Props) {
       {showRemote && (
         <RemoteModal deviceId={identifier} deviceName={name} onClose={() => setShowRemote(false)} />
       )}
-      {showArtwork && artworkFullscreenSrc && (
+      {(showArtwork || (kioskActive && artworkFullscreenSrc)) && artworkFullscreenSrc && (
         <ArtworkModal
           src={artworkFullscreenSrc}
           nowPlaying={effectiveNowPlaying ?? null}
           effectiveSeries={effectiveSeries}
           scores={scores}
           deviceName={name}
-          onClose={() => setShowArtwork(false)}
+          orientation={kioskActive ? kioskOrientation : 'landscape'}
+          onClose={() => { if (!kioskActive) setShowArtwork(false); }}
         />
       )}
     </>

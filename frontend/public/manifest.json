@@ -1,0 +1,11 @@
+{
+  "name": "statusATV",
+  "short_name": "statusATV",
+  "display": "fullscreen",
+  "start_url": "/",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    { "src": "/logo.png", "sizes": "any", "type": "image/png" }
+  ]
+}

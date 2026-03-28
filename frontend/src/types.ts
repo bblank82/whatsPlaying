@@ -1,4 +1,7 @@
 export interface NowPlaying {
+  kscape_cover_url?: string | null;
+  kscape_rating?: string | null;
+  kscape_year?: number | null;
   device_state: string;
   media_type: string | null;
   title: string | null;
@@ -23,6 +26,7 @@ export interface DeviceStatus {
   address: string;
   hostname: string;
   model: string;
+  device_type?: 'appletv' | 'kaleidescape';
   connected: boolean;
   power: string | null;
   now_playing: NowPlaying | null;

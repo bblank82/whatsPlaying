@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { NowPlaying } from '../types';
 
 interface ScoreState {
@@ -14,6 +14,7 @@ interface Props {
   effectiveSeries: string | null;
   scores: ScoreState | null;
   deviceName: string;
+  orientation?: 'landscape' | 'portrait';
   onClose: () => void;
 }
 
@@ -27,17 +28,16 @@ function formatTime(s: number | null): string {
     : `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
-export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceName, onClose }: Props) {
+export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceName, orientation = 'landscape', onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // Request true fullscreen on mount, exit on unmount
+  // Request true fullscreen on mount (succeeds when launched via --app or PWA)
   useEffect(() => {
     const el = containerRef.current;
     if (el?.requestFullscreen) el.requestFullscreen().catch(() => {});
     return () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); };
   }, []);
 
-  // Close on fullscreen exit or Escape
+  // Close on fullscreen exit or Escape (only when not in remote kiosk mode)
   useEffect(() => {
     function onFsChange() { if (!document.fullscreenElement) onClose(); }
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -107,17 +107,33 @@ export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceN
 
   const imdbUrl = scores?.imdb_id ? `https://www.imdb.com/title/${scores.imdb_id}/` : null;
 
+  // Portrait: rotate the inner canvas 90° so a landscape browser window
+  // displays as portrait. The inner div is sized vh×vw (swapped) so it fills
+  // the screen after rotation.
+  const portraitStyle: React.CSSProperties = orientation === 'portrait' ? {
+    position: 'fixed',
+    width: '100vh',
+    height: '100vw',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%) rotate(90deg)',
+    transformOrigin: 'center center',
+    zIndex: 400,
+    overflow: 'hidden',
+    background: '#000',
+  } : {
+    position: 'fixed', inset: 0, zIndex: 400,
+    background: '#000',
+    overflow: 'hidden',
+  };
+
   return (
     <div
       ref={containerRef}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 400,
-        background: '#000',
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        overflow: 'hidden',
-      }}
+      style={{ position: 'fixed', inset: 0, zIndex: 400, background: '#000' }}
     >
+      {/* Inner canvas — rotated when portrait */}
+      <div style={portraitStyle}>
       {/* Blurred background art */}
       <div style={{
         position: 'absolute', inset: 0,
@@ -127,7 +143,7 @@ export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceN
         transform: 'scale(1.1)',
       }} />
 
-      {/* Fullscreen horizontal kiosk container */}
+      {/* Fullscreen kiosk container */}
       <div style={{
         position: 'absolute',
         inset: 0,
@@ -155,7 +171,7 @@ export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceN
           </span>
         </div>
 
-        {/* Poster — full height, contained so nothing is cropped */}
+        {/* Poster — fills screen, info overlaid at bottom */}
         <img
           src={src}
           alt={primaryTitle ?? ''}
@@ -266,6 +282,7 @@ export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceN
             </div>
           )}
         </div>
+      </div>
       </div>
 
     </div>

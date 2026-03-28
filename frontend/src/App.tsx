@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { useDevices } from './hooks/useDevices';
 import { DeviceCard } from './components/DeviceCard';
 import { PairModal } from './components/PairModal';
+import { AdminModal } from './components/AdminModal';
 
 export default function App() {
-  const { devices, connected, triggerScan } = useDevices();
+  const { devices, connected, triggerScan, kioskConfig } = useDevices();
   const [pairingDevice, setPairingDevice] = useState<{ id: string; name: string; isConnected: boolean } | null>(null);
+  const [showAdmin, setShowAdmin] = useState(false);
 
   function handlePair(id: string) {
     const device = devices.find(d => d.identifier === id);
@@ -21,6 +23,19 @@ export default function App() {
     try { await triggerScan(); } finally { setScanning(false); }
   }
 
+  // Determine which device should be in kiosk mode on this host.
+  // device_id=null means "whichever device is actively playing".
+  function isKioskDevice(deviceId: string): boolean {
+    if (!kioskConfig.kiosk) return false;
+    if (kioskConfig.device_id) return kioskConfig.device_id === deviceId;
+    // No specific device pinned — activate on the first playing/paused device
+    const active = devices.find(d => {
+      const s = d.now_playing?.device_state?.toLowerCase() ?? '';
+      return s.includes('playing') || s.includes('paused');
+    });
+    return active?.identifier === deviceId;
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: '#1c1c1e' }}>
 
@@ -31,8 +46,26 @@ export default function App() {
         borderBottom: '1px solid rgba(255,255,255,0.08)',
       }}>
         <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          {/* Logo */}
-          <img src="/logo.png" alt="statusTV" style={{ height: 28, width: 'auto', display: 'block' }} />
+          {/* Left: admin button + logo */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <button
+              onClick={() => setShowAdmin(true)}
+              title="Admin"
+              style={{
+                width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                background: 'rgba(255,255,255,0.09)',
+                border: '1px solid rgba(255,255,255,0.14)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', color: 'rgba(255,255,255,0.6)',
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
+            <img src="/logo.png" alt="statusTV" style={{ height: 28, width: 'auto', display: 'block' }} />
+          </div>
 
           {/* Right side */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -42,27 +75,7 @@ export default function App() {
                 {connected ? `${onlineCount} of ${devices.length} online` : 'Disconnected'}
               </span>
             </div>
-            {/* Show unpaired toggle */}
-            <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', userSelect: 'none' }}>
-              <div
-                onClick={() => setShowUnpaired(v => !v)}
-                style={{
-                  width: 36, height: 20, borderRadius: 10,
-                  background: showUnpaired ? '#0A84FF' : 'rgba(255,255,255,0.15)',
-                  position: 'relative', cursor: 'pointer', transition: 'background 0.2s',
-                  flexShrink: 0,
-                }}
-              >
-                <div style={{
-                  position: 'absolute', top: 2, left: showUnpaired ? 18 : 2,
-                  width: 16, height: 16, borderRadius: '50%', background: '#fff',
-                  transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-                }} />
-              </div>
-              <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)', whiteSpace: 'nowrap' }}>Show unpaired</span>
-            </label>
-
-            <button onClick={handleScan} disabled={scanning} style={{
+<button onClick={handleScan} disabled={scanning} style={{
               fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.75)',
               background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)',
               borderRadius: 8, padding: '6px 14px', cursor: scanning ? 'default' : 'pointer',
@@ -86,18 +99,30 @@ export default function App() {
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="2" y="3" width="20" height="14" rx="2.5"/><path d="M8 21h8M12 17v4"/>
             </svg>
-            <p style={{ fontSize: 15 }}>{connected ? 'Scanning for Apple TV devices…' : 'Connecting…'}</p>
+            <p style={{ fontSize: 15 }}>{connected ? 'Scanning for devices…' : 'Connecting…'}</p>
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 12 }}>
             {[...devices]
               .filter(d => showUnpaired || d.connected)
               .sort((a, b) => {
+                const isActive = (d: typeof a) => {
+                  const s = d.now_playing?.device_state?.toLowerCase() ?? '';
+                  return s.includes('playing') || s.includes('paused');
+                };
+                const activeDiff = Number(isActive(b)) - Number(isActive(a));
+                if (activeDiff !== 0) return activeDiff;
                 const connDiff = Number(b.connected) - Number(a.connected);
                 if (connDiff !== 0) return connDiff;
                 return a.name.localeCompare(b.name);
               }).map(device => (
-              <DeviceCard key={device.identifier} device={device} onPair={handlePair} />
+              <DeviceCard
+                key={device.identifier}
+                device={device}
+                onPair={handlePair}
+                kioskActive={isKioskDevice(device.identifier)}
+                kioskOrientation={kioskConfig.orientation}
+              />
             ))}
           </div>
         )}
@@ -113,6 +138,15 @@ export default function App() {
           deviceName={pairingDevice.name}
           isConnected={pairingDevice.isConnected}
           onClose={() => setPairingDevice(null)}
+        />
+      )}
+
+      {showAdmin && (
+        <AdminModal
+          devices={devices}
+          showUnpaired={showUnpaired}
+          onShowUnpairedChange={setShowUnpaired}
+          onClose={() => setShowAdmin(false)}
         />
       )}
     </div>

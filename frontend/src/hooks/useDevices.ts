@@ -4,9 +4,17 @@ import type { DeviceStatus } from '../types';
 const WS_URL = `ws://${window.location.host}/ws`;
 const RECONNECT_DELAY = 3000;
 
+export interface KioskConfig {
+  kiosk: boolean;
+  orientation: 'landscape' | 'portrait';
+  device_id: string | null;
+}
+
 export function useDevices() {
   const [devices, setDevices] = useState<DeviceStatus[]>([]);
   const [connected, setConnected] = useState(false);
+  const [clientId, setClientId] = useState<string | null>(null);
+  const [kioskConfig, setKioskConfig] = useState<KioskConfig>({ kiosk: false, orientation: 'landscape', device_id: null });
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -28,6 +36,11 @@ export function useDevices() {
           const msg = JSON.parse(event.data);
           if (msg.type === 'status_update') {
             setDevices(msg.devices);
+          } else if (msg.type === 'client_hello') {
+            setClientId(msg.client_id);
+            setKioskConfig({ kiosk: msg.kiosk, orientation: msg.orientation, device_id: msg.device_id });
+          } else if (msg.type === 'kiosk_config') {
+            setKioskConfig({ kiosk: msg.kiosk, orientation: msg.orientation, device_id: msg.device_id });
           }
         } catch {
           // ignore malformed messages
@@ -57,5 +70,5 @@ export function useDevices() {
     await fetch('/api/scan', { method: 'POST' });
   }
 
-  return { devices, connected, triggerScan };
+  return { devices, connected, triggerScan, clientId, kioskConfig };
 }

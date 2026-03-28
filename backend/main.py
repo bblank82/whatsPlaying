@@ -19,6 +19,8 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pyatv.conf import AppleTV as ATVConf, ManualService
 from pyatv.const import Protocol as _Protocol
@@ -26,6 +28,7 @@ from pyatv.const import Protocol as _Protocol
 from atv_client import DeviceClient
 from credentials import get_for_device, save as save_credential, forget as forget_credentials
 from discovery import scan_devices, _conf_to_dict
+from kscape_client import KaleidescapeClient
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -36,7 +39,9 @@ POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "5"))    # poll now-playing every
 TMDB_API_KEY  = os.getenv("TMDB_API_KEY", "")
 OMDB_API_KEY  = os.getenv("OMDB_API_KEY", "trilogy")  # free fallback; register at omdbapi.com for higher limits
 # Comma-separated IPs for devices on other subnets that mDNS can't reach
-EXTRA_HOSTS   = [h.strip() for h in os.getenv("EXTRA_HOSTS", "").split(",") if h.strip()]
+EXTRA_HOSTS        = [h.strip() for h in os.getenv("EXTRA_HOSTS", "").split(",") if h.strip()]
+# Comma-separated IPs for Kaleidescape players
+KALEIDESCAPE_HOSTS = [h.strip() for h in os.getenv("KALEIDESCAPE_HOSTS", "").split(",") if h.strip()]
 
 
 def _is_appletv(conf) -> bool:
@@ -81,8 +86,16 @@ async def _probe_extra_host(ip: str) -> Optional[ATVConf]:
 
 clients: dict[str, DeviceClient] = {}          # identifier -> DeviceClient
 latest_statuses: dict[str, dict] = {}          # identifier -> last status snapshot
-websocket_connections: list[WebSocket] = []
 active_pairings: dict[str, object] = {}        # pairing_id -> PairingHandler
+
+# WebSocket client registry
+# ws_clients: client_id -> {ws, ip, hostname}
+ws_clients: dict[str, dict] = {}
+# kiosk config per client_id — persists across reconnects for same IP
+# shape: {kiosk: bool, orientation: "landscape"|"portrait", device_id: str|None}
+kiosk_configs: dict[str, dict] = {}
+# ip -> client_id — allows restoring config when same host reconnects
+_ip_to_client_id: dict[str, str] = {}
 
 # Protocol priority for pairing (best for metadata first)
 _PAIRING_PRIORITY = [_Protocol.Companion, _Protocol.MRP, _Protocol.AirPlay]
@@ -135,6 +148,8 @@ async def discovery_loop():
                         extra_ids.add(ident)
 
             for ident in list(clients.keys()):
+                if isinstance(clients[ident], KaleidescapeClient):
+                    continue  # managed separately — never removed by ATV discovery
                 if ident not in found_ids and ident not in extra_ids:
                     logger.info("Device gone: %s", ident)
                     await clients[ident].disconnect()
@@ -160,16 +175,16 @@ async def polling_loop():
             latest_statuses[client.identifier] = status
             statuses.append(status)
 
-        if websocket_connections:
+        if ws_clients:
             payload = json.dumps({"type": "status_update", "devices": statuses})
             dead = []
-            for ws in websocket_connections:
+            for cid, entry in list(ws_clients.items()):
                 try:
-                    await ws.send_text(payload)
+                    await entry["ws"].send_text(payload)
                 except Exception:
-                    dead.append(ws)
-            for ws in dead:
-                websocket_connections.remove(ws)
+                    dead.append(cid)
+            for cid in dead:
+                ws_clients.pop(cid, None)
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +205,12 @@ async def lifespan(app: FastAPI):
 
     for conf in found:
         await _connect_conf(conf)
+
+    # Connect Kaleidescape players
+    for ip in KALEIDESCAPE_HOSTS:
+        kc = KaleidescapeClient(ip)
+        clients[kc.identifier] = kc
+        await kc.connect()
 
     # Launch background tasks
     asyncio.create_task(discovery_loop())
@@ -237,7 +258,18 @@ async def get_device(identifier: str):
 async def control_device(identifier: str, action: str, pos: Optional[float] = None):
     """Send a remote-control command to a device."""
     client = clients.get(identifier)
-    if not client or not client._atv:
+    if not client:
+        return {"error": "Device not found"}
+
+    # Kaleidescape transport control
+    if isinstance(client, KaleidescapeClient):
+        try:
+            await client.send_command(action, pos=int(pos) if pos is not None else None)
+            return {"success": True}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    if not client._atv:
         return {"error": "Device not connected"}
     rc = client._atv.remote_control
     try:
@@ -337,7 +369,27 @@ async def get_app_icon(bundle_id: str):
 async def get_artwork(identifier: str):
     """Return current artwork for a device (JPEG/PNG bytes)."""
     client = clients.get(identifier)
-    if not client or not client._atv:
+    if not client:
+        return Response(status_code=404)
+
+    # Kaleidescape: proxy cover image from player HTTP server
+    if isinstance(client, KaleidescapeClient):
+        url = client._cover_url
+        if not url:
+            return Response(status_code=404)
+        try:
+            async with httpx.AsyncClient(timeout=5) as hc:
+                r = await hc.get(url)
+            if r.status_code != 200:
+                return Response(status_code=404)
+            ct = r.headers.get("content-type", "image/jpeg")
+            return Response(content=r.content, media_type=ct)
+        except Exception as exc:
+            logger.debug("Kaleidescape artwork fetch failed: %s", exc)
+            return Response(status_code=404)
+
+    # Apple TV
+    if not client._atv:
         return Response(status_code=404)
     try:
         artwork = await client._atv.metadata.artwork(width=600, height=600)
@@ -706,27 +758,111 @@ async def finish_pairing(identifier: str, body: PairFinishRequest):
 
 
 # ---------------------------------------------------------------------------
+# Admin: connected hosts + kiosk management
+# ---------------------------------------------------------------------------
+
+def _default_kiosk_config() -> dict:
+    return {"kiosk": False, "orientation": "landscape", "device_id": None}
+
+
+@app.get("/api/admin/hosts")
+async def admin_list_hosts():
+    """Return all currently connected WebSocket clients with their kiosk config."""
+    return [
+        {
+            "client_id": cid,
+            "ip": entry["ip"],
+            "hostname": entry.get("hostname", entry["ip"]),
+            "kiosk_config": kiosk_configs.get(cid, _default_kiosk_config()),
+        }
+        for cid, entry in ws_clients.items()
+    ]
+
+
+class KioskConfigBody(BaseModel):
+    kiosk: bool
+    orientation: str = "landscape"
+    device_id: Optional[str] = None
+
+
+@app.post("/api/admin/hosts/{client_id}/kiosk")
+async def admin_set_kiosk(client_id: str, body: KioskConfigBody):
+    """Update kiosk config for a connected host and push the change via WebSocket."""
+    config = {"kiosk": body.kiosk, "orientation": body.orientation, "device_id": body.device_id}
+    kiosk_configs[client_id] = config
+
+    entry = ws_clients.get(client_id)
+    if entry:
+        try:
+            await entry["ws"].send_text(json.dumps({"type": "kiosk_config", **config}))
+        except Exception:
+            pass
+
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # WebSocket endpoint
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    websocket_connections.append(websocket)
-    logger.info("WebSocket client connected (total: %d)", len(websocket_connections))
 
-    # Send current state immediately on connect
+    # Identify the client — honour X-Forwarded-For set by Vite's proxy
+    forwarded_for = websocket.headers.get("x-forwarded-for")
+    client_ip = (forwarded_for.split(",")[0].strip() if forwarded_for
+                 else (websocket.client.host if websocket.client else "unknown"))
+    client_id = _ip_to_client_id.get(client_ip) or str(uuid.uuid4())
+    _ip_to_client_id[client_ip] = client_id
+
+    # Resolve hostname for display
+    import socket as _socket
+    try:
+        hostname = _socket.gethostbyaddr(client_ip)[0]
+    except Exception:
+        hostname = client_ip
+
+    ws_clients[client_id] = {"ws": websocket, "ip": client_ip, "hostname": hostname}
+    logger.info("WebSocket client connected: %s (%s) total=%d", hostname, client_ip, len(ws_clients))
+
+    # Send hello with client_id + current kiosk config
+    kiosk_cfg = kiosk_configs.get(client_id, _default_kiosk_config())
+    await websocket.send_text(json.dumps({
+        "type": "client_hello",
+        "client_id": client_id,
+        **kiosk_cfg,
+    }))
+
+    # Send current device state immediately
     await websocket.send_text(
         json.dumps({"type": "status_update", "devices": list(latest_statuses.values())})
     )
 
     try:
         while True:
-            # Keep the connection alive; client can send pings
             await websocket.receive_text()
     except WebSocketDisconnect:
-        websocket_connections.remove(websocket)
-        logger.info("WebSocket client disconnected (total: %d)", len(websocket_connections))
+        ws_clients.pop(client_id, None)
+        logger.info("WebSocket client disconnected: %s total=%d", client_ip, len(ws_clients))
+
+
+# ---------------------------------------------------------------------------
+# Static frontend — served from ../frontend/dist
+# ---------------------------------------------------------------------------
+
+_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+
+if os.path.isdir(_DIST):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_DIST, "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        # Serve known static files from dist root directly
+        candidate = os.path.join(_DIST, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(_DIST, "index.html"))
 
 
 if __name__ == "__main__":

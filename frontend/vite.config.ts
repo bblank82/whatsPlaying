@@ -9,9 +9,11 @@ export default defineConfig({
     environment: 'node',
   },
   server: {
+    host: '0.0.0.0',
+    allowedHosts: true,
     proxy: {
       '/api': 'http://localhost:8000',
-      '/ws': { target: 'ws://localhost:8000', ws: true },
+      '/ws': { target: 'ws://localhost:8000', ws: true, xfwd: true },
     },
   },
 })
