@@ -165,7 +165,7 @@ interface Props {
 }
 
 export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientation = 'landscape' }: Props) {
-  const { identifier, name, hostname, model, device_type, connected, power, now_playing } = device;
+  const { identifier, name, hostname, model, device_type, connected, paired, power, now_playing } = device;
   const debug = useDebug();
   const isKaleidescape = device_type === 'kaleidescape';
   const isOn = power?.toLowerCase().includes('on');
@@ -560,10 +560,10 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <DeviceIcon model={model ?? 'Unknown'} deviceType={device_type} name={name} dim />
                 <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>
-                  {isKaleidescape ? 'Disconnected' : 'Not paired'}
+                  {isKaleidescape ? 'Disconnected' : paired ? 'Unreachable' : 'Not paired'}
                 </p>
               </div>
-              {!isKaleidescape && (
+              {!isKaleidescape && !paired && (
                 <button
                   onClick={() => onPair(identifier)}
                   style={{

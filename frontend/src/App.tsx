@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useDevices } from './hooks/useDevices';
 import { DeviceCard } from './components/DeviceCard';
 import { PairModal } from './components/PairModal';
@@ -51,6 +51,14 @@ export default function App() {
     const active = allActive.find(d => isPlaying(d)) ?? allActive[0];
     return active?.identifier === deviceId;
   }
+
+  // Show the kiosk black screen when kiosk mode is on but nothing is actively playing/paused
+  // (device stopped, or nothing in the bound room is active yet)
+  const kioskHasContent = kioskConfig.kiosk && devices.some(d => {
+    if (!isKioskDevice(d.identifier)) return false;
+    const s = d.now_playing?.device_state?.toLowerCase() ?? '';
+    return s.includes('playing') || s.includes('paused');
+  });
 
   const debugCtx = { log: logRef.current };
 
@@ -161,8 +169,47 @@ export default function App() {
         {debugMode && (
           <DebugPanel entries={debugEntries} onClear={() => setDebugEntries([])} />
         )}
+
+        {kioskConfig.kiosk && !kioskHasContent && (
+          <KioskBlackScreen orientation={kioskConfig.orientation} />
+        )}
       </div>
     </DebugContext.Provider>
+  );
+}
+
+function KioskBlackScreen({ orientation }: { orientation: 'landscape' | 'portrait' }) {
+  const innerStyle: React.CSSProperties = orientation === 'portrait' ? {
+    position: 'fixed',
+    width: '100vh',
+    height: '100vw',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%) rotate(90deg)',
+    transformOrigin: 'center center',
+    zIndex: 401,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  } : {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 401,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 400, background: '#000' }}>
+      <div style={innerStyle}>
+        <img
+          src="/logo.png"
+          alt="What's Playing"
+          style={{ width: 'clamp(120px, 25vmin, 220px)', height: 'auto', opacity: 0.7 }}
+        />
+      </div>
+    </div>
   );
 }
 

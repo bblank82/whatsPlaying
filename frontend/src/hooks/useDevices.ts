@@ -22,6 +22,13 @@ export function useDevices(logRef?: MutableRefObject<LogFn>) {
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Force a full page reload every 10 minutes when in kiosk mode to pick up UI updates
+  useEffect(() => {
+    if (!kioskConfig.kiosk) return;
+    const id = setTimeout(() => window.location.reload(), 10 * 60 * 1000);
+    return () => clearTimeout(id);
+  }, [kioskConfig.kiosk]);
+
   useEffect(() => {
     let cancelled = false;
 

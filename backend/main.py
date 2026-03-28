@@ -42,6 +42,8 @@ EXTRA_HOSTS        = [h.strip() for h in os.getenv("EXTRA_HOSTS", "").split(",")
 # Comma-separated IPs for Kaleidescape players
 KALEIDESCAPE_HOSTS = [h.strip() for h in os.getenv("KALEIDESCAPE_HOSTS", "").split(",") if h.strip()]
 
+KIOSK_CONFIGS_PATH = os.path.join(os.path.dirname(__file__), "kiosk_configs.json")
+
 
 def _is_appletv(conf) -> bool:
     """Return True only for Apple TV devices (filter out HomePods, AirPorts, etc.)."""
@@ -128,8 +130,9 @@ def _forget_known_device(identifier: str) -> None:
 
 def _offline_status(info: dict) -> dict:
     """Build a disconnected status snapshot from stored device info."""
+    identifier = info["identifier"]
     return {
-        "identifier": info["identifier"],
+        "identifier": identifier,
         "name": info["name"],
         "address": info.get("address", ""),
         "hostname": "",
@@ -137,6 +140,7 @@ def _offline_status(info: dict) -> dict:
         "device_type": info.get("device_type", "appletv"),
         "room": info.get("room"),
         "connected": False,
+        "paired": bool(get_for_device(identifier)),
         "power": None,
         "now_playing": None,
     }
@@ -159,6 +163,29 @@ ws_clients: dict[str, dict] = {}
 kiosk_configs: dict[str, dict] = {}
 # ip -> client_id — allows restoring config when same host reconnects
 _ip_to_client_id: dict[str, str] = {}
+# ip -> kiosk config — persisted to disk so configs survive server restarts
+_ip_kiosk_configs: dict[str, dict] = {}
+
+
+def _load_ip_kiosk_configs():
+    global _ip_kiosk_configs
+    try:
+        with open(KIOSK_CONFIGS_PATH) as f:
+            _ip_kiosk_configs = json.load(f)
+        logger.info("Loaded kiosk configs for %d IP(s)", len(_ip_kiosk_configs))
+    except FileNotFoundError:
+        _ip_kiosk_configs = {}
+    except Exception as exc:
+        logger.warning("Could not load kiosk configs: %s", exc)
+        _ip_kiosk_configs = {}
+
+
+def _save_ip_kiosk_configs():
+    try:
+        with open(KIOSK_CONFIGS_PATH, "w") as f:
+            json.dump(_ip_kiosk_configs, f, indent=2)
+    except Exception as exc:
+        logger.warning("Could not save kiosk configs: %s", exc)
 
 # Protocol priority for pairing (best for metadata first)
 _PAIRING_PRIORITY = [_Protocol.Companion, _Protocol.MRP, _Protocol.AirPlay]
@@ -239,6 +266,7 @@ async def polling_loop():
         for client in list(clients.values()):
             status = await client.get_status()
             status["room"] = device_rooms.get(client.identifier)
+            status["paired"] = bool(get_for_device(client.identifier)) if not isinstance(client, KaleidescapeClient) else True
             latest_statuses[client.identifier] = status
             statuses.append(status)
 
@@ -260,6 +288,8 @@ async def polling_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _load_ip_kiosk_configs()
+
     # Pre-populate device list from persisted known devices (shows as offline until found)
     for info in _load_known_devices().values():
         latest_statuses[info["identifier"]] = _offline_status(info)
@@ -961,6 +991,9 @@ async def admin_set_kiosk(client_id: str, body: KioskConfigBody):
 
     entry = ws_clients.get(client_id)
     if entry:
+        # Persist by IP so config survives server restarts
+        _ip_kiosk_configs[entry["ip"]] = config
+        _save_ip_kiosk_configs()
         try:
             await entry["ws"].send_text(json.dumps({"type": "kiosk_config", **config}))
         except Exception:
@@ -993,6 +1026,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
     ws_clients[client_id] = {"ws": websocket, "ip": client_ip, "hostname": hostname}
     logger.info("WebSocket client connected: %s (%s) total=%d", hostname, client_ip, len(ws_clients))
+
+    # Restore kiosk config: in-memory (same session reconnect) → persisted (server restart)
+    if client_id not in kiosk_configs and client_ip in _ip_kiosk_configs:
+        kiosk_configs[client_id] = _ip_kiosk_configs[client_ip]
+        logger.info("Restored kiosk config for %s from disk", client_ip)
 
     # Send hello with client_id + current kiosk config
     kiosk_cfg = kiosk_configs.get(client_id, _default_kiosk_config())

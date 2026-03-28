@@ -1,0 +1,8 @@
+{
+  "192.168.75.216": {
+    "kiosk": true,
+    "orientation": "landscape",
+    "device_id": null,
+    "room_id": "Theater"
+  }
+}
