@@ -20,6 +20,8 @@ interface Props {
   showUnpaired: boolean;
   onShowUnpairedChange: (v: boolean) => void;
   onTriggerScan: () => Promise<void>;
+  debugMode: boolean;
+  onDebugModeChange: (v: boolean) => void;
   onClose: () => void;
 }
 
@@ -42,7 +44,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
   );
 }
 
-export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTriggerScan, onClose }: Props) {
+export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTriggerScan, debugMode, onDebugModeChange, onClose }: Props) {
   const [hosts, setHosts] = useState<HostEntry[]>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [scanning, setScanning] = useState(false);
@@ -318,6 +320,21 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
               </div>
             );
           })}
+
+          {/* ── Developer ── */}
+          <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '10px 2px 4px' }}>Developer</p>
+          <div style={{
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: 10, padding: '10px 14px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 500, color: '#fff' }}>Debug panel</p>
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>Show command and WebSocket log</p>
+            </div>
+            <Toggle value={debugMode} onChange={onDebugModeChange} />
+          </div>
         </div>
       </div>
     </div>

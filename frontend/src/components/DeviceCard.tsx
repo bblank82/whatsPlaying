@@ -4,6 +4,7 @@ import { NowPlaying } from './NowPlaying';
 import { RemoteModal } from './RemoteModal';
 import { ArtworkModal } from './ArtworkModal';
 import { parseHuluTitle, parsePlexTitle, detectPlexSeries, isGenericVideoTitle, ARTIST_AS_SERIES_APP_IDS, YOUTUBE_APP_IDS } from '../utils';
+import { useDebug } from '../contexts/debug';
 
 // ---------------------------------------------------------------------------
 // Device icon
@@ -165,6 +166,7 @@ interface Props {
 
 export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientation = 'landscape' }: Props) {
   const { identifier, name, hostname, model, device_type, connected, power, now_playing } = device;
+  const debug = useDebug();
   const isKaleidescape = device_type === 'kaleidescape';
   const isOn = power?.toLowerCase().includes('on');
 
@@ -316,6 +318,7 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
     if (action === 'play_pause')     setOptimistic({ deviceState: isPlaying ? 'DeviceState.Paused' : 'DeviceState.Playing' });
     else if (action === 'skip_forward')  setOptimistic({ positionDelta:  10 });
     else if (action === 'skip_backward') setOptimistic({ positionDelta: -10 });
+    debug.log('send', action, name);
     await fetch(`/api/devices/${encodeURIComponent(identifier)}/control/${action}`, { method: 'POST' });
   }
 
@@ -441,9 +444,10 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <NowPlaying
                     nowPlaying={effectiveNowPlaying}
-                    onSeek={pos =>
-                      fetch(`/api/devices/${encodeURIComponent(identifier)}/control/set_position?pos=${pos}`, { method: 'POST' })
-                    }
+                    onSeek={pos => {
+                      debug.log('send', `set_position pos=${pos}`, name);
+                      fetch(`/api/devices/${encodeURIComponent(identifier)}/control/set_position?pos=${pos}`, { method: 'POST' });
+                    }}
                     resolvedSeries={artistAsSeries}
                     belowBar={isVideo && scores ? <ScoresRow scores={scores} /> : undefined}
                   />
@@ -554,6 +558,7 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
           scores={scores}
           deviceName={name}
           orientation={kioskActive ? kioskOrientation : 'landscape'}
+          kioskActive={kioskActive}
           onClose={() => { if (!kioskActive) setShowArtwork(false); }}
         />
       )}

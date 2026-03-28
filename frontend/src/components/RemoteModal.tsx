@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useDebug } from '../contexts/debug';
 
 interface Props {
   deviceId: string;
@@ -45,10 +46,13 @@ function Btn({
 }
 
 export function RemoteModal({ deviceId, deviceName, onClose }: Props) {
+  const debug = useDebug();
   const send = useCallback(
-    (action: string) =>
-      fetch(`/api/devices/${encodeURIComponent(deviceId)}/control/${action}`, { method: 'POST' }),
-    [deviceId],
+    (action: string) => {
+      debug.log('send', action, deviceName);
+      return fetch(`/api/devices/${encodeURIComponent(deviceId)}/control/${action}`, { method: 'POST' });
+    },
+    [deviceId, deviceName, debug],
   );
 
   const BODY_W = 196;
@@ -237,12 +241,6 @@ export function RemoteModal({ deviceId, deviceName, onClose }: Props) {
           </Btn>
         </div>
 
-        {/* Volume */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-          <Btn onClick={() => send('volume_down')} title="Volume Down" style={{ width: 46, height: 36, borderRadius: 10, fontSize: 20, fontWeight: 300, letterSpacing: 0 }}>−</Btn>
-          <div style={{ flex: 1, height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2 }} />
-          <Btn onClick={() => send('volume_up')} title="Volume Up" style={{ width: 46, height: 36, borderRadius: 10, fontSize: 20, fontWeight: 300 }}>+</Btn>
-        </div>
       </div>
     </div>
   );

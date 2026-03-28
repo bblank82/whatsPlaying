@@ -15,6 +15,7 @@ interface Props {
   scores: ScoreState | null;
   deviceName: string;
   orientation?: 'landscape' | 'portrait';
+  kioskActive?: boolean;
   onClose: () => void;
 }
 
@@ -28,7 +29,7 @@ function formatTime(s: number | null): string {
     : `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
-export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceName, orientation = 'landscape', onClose }: Props) {
+export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceName, orientation = 'landscape', kioskActive = false, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Request true fullscreen on mount (succeeds when launched via --app or PWA)
   useEffect(() => {
@@ -130,7 +131,8 @@ export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceN
   return (
     <div
       ref={containerRef}
-      style={{ position: 'fixed', inset: 0, zIndex: 400, background: '#000' }}
+      onClick={!kioskActive ? onClose : undefined}
+      style={{ position: 'fixed', inset: 0, zIndex: 400, background: '#000', cursor: kioskActive ? 'default' : 'pointer' }}
     >
       {/* Inner canvas — rotated when portrait */}
       <div style={portraitStyle}>
