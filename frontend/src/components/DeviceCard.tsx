@@ -328,14 +328,16 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
     await fetch(`/api/devices/${encodeURIComponent(identifier)}/control/${action}`, { method: 'POST' });
   }
 
-  // Kaleidescape serves its own cover art directly — use that as fallback before pyatv artwork
+  // Kaleidescape serves its own cover art directly — authoritative; don't let TMDB override it
   const kscapeCoverUrl = now_playing?.kscape_cover_url ?? null;
 
   // Suppress pyatv artwork while TMDB is in-flight for video content — avoids the
   // flash of wrong art before the poster loads.
   const artworkFallback = (isVideo && !tmdbResolved) ? null : (kscapeCoverUrl ?? artworkUrl);
-  const cardArtworkSrc      = tmdbPosterUrl ?? ytThumbUrl ?? artworkFallback;
-  const artworkFullscreenSrc = tmdbFullsizeUrl ?? ytThumbUrl ?? artworkFallback;
+  // When Kaleidescape provides its own cover art, use it directly (TMDB title search is
+  // unreliable for sequels/subtitles and could return the wrong movie).
+  const cardArtworkSrc      = kscapeCoverUrl ?? tmdbPosterUrl ?? ytThumbUrl ?? artworkFallback;
+  const artworkFullscreenSrc = kscapeCoverUrl ?? tmdbFullsizeUrl ?? ytThumbUrl ?? artworkFallback;
 
   const borderColor = connected
     ? isPlaying ? 'rgba(48,209,88,0.35)' : 'rgba(255,255,255,0.1)'
