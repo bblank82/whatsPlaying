@@ -1,6 +1,6 @@
 {
-  "name": "statusATV",
-  "short_name": "statusATV",
+  "name": "What's Playing",
+  "short_name": "What's Playing",
   "display": "fullscreen",
   "start_url": "/",
   "background_color": "#000000",

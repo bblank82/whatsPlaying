@@ -223,7 +223,7 @@ async def lifespan(app: FastAPI):
         await client.disconnect()
 
 
-app = FastAPI(title="Apple TV Monitor", lifespan=lifespan)
+app = FastAPI(title="What's Playing", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

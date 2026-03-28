@@ -70,7 +70,7 @@ class KaleidescapeClient:
     def __init__(self, ip: str):
         self.address = ip
         self.identifier = f"kaleidescape-{ip}"
-        self.name = "Kaleidescape"
+        self.name = "Kaleidescape (Kaleidescape)"
         self._hostname: Optional[str] = None
         self._connected = False
         self._reader: Optional[asyncio.StreamReader] = None
@@ -122,7 +122,7 @@ class KaleidescapeClient:
                 if ip_match:
                     name_match = re.search(r'friendly_name[^>]+value="([^"]+)"', block)
                     if name_match and name_match.group(1).strip():
-                        self.name = name_match.group(1).strip()
+                        self.name = f"{name_match.group(1).strip()} (Kaleidescape)"
                         logger.info("Kaleidescape friendly name: %s", self.name)
                     break
         except Exception as exc:
@@ -311,7 +311,7 @@ class KaleidescapeClient:
         # We try positions known from the protocol spec; fall back gracefully
         try:
             if len(fields) >= 1 and fields[0]:
-                self.name = fields[0]
+                self.name = f"{fields[0]} (Kaleidescape)"
             if len(fields) >= 2 and fields[1]:
                 self._serial = fields[1]
                 self.identifier = f"kaleidescape-{self._serial}"
