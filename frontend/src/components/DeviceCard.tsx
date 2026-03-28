@@ -265,13 +265,19 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
     setTmdbResolved(false);
     const params = new URLSearchParams({ title: lookupTitle, media_type: mediaTypeForApi });
     if (forceMediaType) params.set('force_media_type', 'true');
+    if (effectiveSeason != null) params.set('season_number', String(effectiveSeason));
+    // When looking up by series name, pass the episode title so the backend can
+    // infer the season when season_number isn't in the metadata (e.g. HBO Max)
+    if (effectiveSeries && now_playing?.title && effectiveSeason == null) {
+      params.set('episode_title', now_playing.title);
+    }
     fetch(`/api/tmdb?${params}`)
       .then(r => r.json()).then(d => {
         setTmdbPosterUrl(d.poster_url ?? null);
         setTmdbFullsizeUrl(d.fullsize_url ?? null);
       }).catch(() => {})
       .finally(() => setTmdbResolved(true));
-  }, [lookupTitle, mediaTypeForApi, forceMediaType, isVideo, isActive]);
+  }, [lookupTitle, mediaTypeForApi, forceMediaType, effectiveSeason, now_playing?.title, isVideo, isActive]);
   // App icon from iTunes — fetched when active and no content artwork is available
   const [appIconUrl, setAppIconUrl] = useState<string | null>(null);
   useEffect(() => {

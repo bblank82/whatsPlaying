@@ -662,24 +662,89 @@ async def get_rt_scores(title: str, media_type: str = "movie", force_media_type:
     return {"tomatometer": None, "audience_score": None, "url": rt_search_url}
 
 
+async def _find_season_by_episode(client, tmdb_id: int, episode_title: str) -> Optional[int]:
+    """Search a TV show's seasons on TMDB to find which season contains the given episode title.
+
+    Fetches all season episode lists in parallel. Returns the season number on match, or None.
+    """
+    show = await client.get(
+        f"https://api.themoviedb.org/3/tv/{tmdb_id}",
+        params={"api_key": TMDB_API_KEY},
+    )
+    seasons = [s for s in show.json().get("seasons", []) if s.get("season_number", 0) > 0]
+    if not seasons:
+        return None
+
+    season_numbers = [s["season_number"] for s in seasons]
+    responses = await asyncio.gather(*[
+        client.get(
+            f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{n}",
+            params={"api_key": TMDB_API_KEY},
+        )
+        for n in season_numbers
+    ], return_exceptions=True)
+
+    ep_lower = episode_title.lower().strip()
+    for season_num, resp in zip(season_numbers, responses):
+        if isinstance(resp, Exception) or resp.status_code != 200:
+            continue
+        for ep in resp.json().get("episodes", []):
+            if (ep.get("name") or "").lower().strip() == ep_lower:
+                return season_num
+    return None
+
+
 @app.get("/api/tmdb")
-async def get_tmdb(title: str, media_type: str = "movie", force_media_type: bool = False):
-    """Look up TMDB for high-res poster art. Requires TMDB_API_KEY env var."""
+async def get_tmdb(title: str, media_type: str = "movie", force_media_type: bool = False,
+                   season_number: Optional[int] = None, episode_title: Optional[str] = None):
+    """Look up TMDB for high-res poster art. Requires TMDB_API_KEY env var.
+
+    For TV shows, uses ``season_number`` when provided. When it's absent but
+    ``episode_title`` is given, searches season episode lists to infer the season,
+    then returns season-specific artwork. Falls back to show-level poster.
+    """
     if not TMDB_API_KEY:
         return {"available": False}
     title = _clean_title(title)
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             kind, tmdb_id, _imdb_id, _year = await _tmdb_best(client, title, media_type, force_hint=force_media_type)
             if not tmdb_id:
                 return {"available": False}
-            # Fetch full details for poster path
-            detail = await client.get(
-                f"https://api.themoviedb.org/3/{kind}/{tmdb_id}",
-                params={"api_key": TMDB_API_KEY},
-            )
-            item = detail.json()
-            poster = item.get("poster_path")
+
+            poster = None
+
+            if kind == "tv":
+                resolved_season = season_number
+
+                # No season from metadata — try to infer from episode title
+                if resolved_season is None and episode_title:
+                    try:
+                        resolved_season = await _find_season_by_episode(client, tmdb_id, episode_title)
+                        if resolved_season is not None:
+                            logger.debug("TMDB inferred season %s for %r ep %r", resolved_season, title, episode_title)
+                    except Exception as exc:
+                        logger.debug("TMDB episode season inference failed for %r: %s", title, exc)
+
+                if resolved_season is not None:
+                    try:
+                        season_detail = await client.get(
+                            f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{resolved_season}",
+                            params={"api_key": TMDB_API_KEY},
+                        )
+                        if season_detail.status_code == 200:
+                            poster = season_detail.json().get("poster_path")
+                    except Exception as exc:
+                        logger.debug("TMDB season poster fetch failed for %r S%s: %s", title, resolved_season, exc)
+
+            # Fall back to show/movie level poster
+            if not poster:
+                detail = await client.get(
+                    f"https://api.themoviedb.org/3/{kind}/{tmdb_id}",
+                    params={"api_key": TMDB_API_KEY},
+                )
+                poster = detail.json().get("poster_path")
+
             return {
                 "available": True,
                 "poster_url": f"https://image.tmdb.org/t/p/w500{poster}" if poster else None,
