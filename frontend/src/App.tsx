@@ -15,24 +15,22 @@ export default function App() {
   }
 
   const [showUnpaired, setShowUnpaired] = useState(false);
-  const [scanning, setScanning] = useState(false);
   const onlineCount = devices.filter(d => d.connected).length;
 
-  async function handleScan() {
-    setScanning(true);
-    try { await triggerScan(); } finally { setScanning(false); }
-  }
-
   // Determine which device should be in kiosk mode on this host.
-  // device_id=null means "whichever device is actively playing".
+  // Priority: specific device_id > room_id (first active in room) > any active device
   function isKioskDevice(deviceId: string): boolean {
     if (!kioskConfig.kiosk) return false;
     if (kioskConfig.device_id) return kioskConfig.device_id === deviceId;
-    // No specific device pinned — activate on the first playing/paused device
-    const active = devices.find(d => {
+    const isActive = (d: (typeof devices)[0]) => {
       const s = d.now_playing?.device_state?.toLowerCase() ?? '';
       return s.includes('playing') || s.includes('paused');
-    });
+    };
+    if (kioskConfig.room_id) {
+      const active = devices.find(d => d.room === kioskConfig.room_id && isActive(d));
+      return active?.identifier === deviceId;
+    }
+    const active = devices.find(d => isActive(d));
     return active?.identifier === deviceId;
   }
 
@@ -68,26 +66,11 @@ export default function App() {
           </div>
 
           {/* Right side */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? '#30D158' : '#FF453A', boxShadow: connected ? '0 0 6px #30D158' : 'none' }} />
-              <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)' }}>
-                {connected ? `${onlineCount} of ${devices.length} online` : 'Disconnected'}
-              </span>
-            </div>
-<button onClick={handleScan} disabled={scanning} style={{
-              fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.75)',
-              background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 8, padding: '6px 14px', cursor: scanning ? 'default' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 6,
-              opacity: scanning ? 0.5 : 1, transition: 'opacity 0.2s',
-            }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-                style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }}>
-                <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
-              </svg>
-              {scanning ? 'Scanning…' : 'Scan'}
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? '#30D158' : '#FF453A', boxShadow: connected ? '0 0 6px #30D158' : 'none' }} />
+            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)' }}>
+              {connected ? `${onlineCount} of ${devices.length} online` : 'Disconnected'}
+            </span>
           </div>
         </div>
       </header>
@@ -147,6 +130,7 @@ export default function App() {
           devices={devices}
           showUnpaired={showUnpaired}
           onShowUnpairedChange={setShowUnpaired}
+          onTriggerScan={triggerScan}
           onClose={() => setShowAdmin(false)}
         />
       )}

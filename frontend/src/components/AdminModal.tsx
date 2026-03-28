@@ -5,6 +5,7 @@ interface KioskConfig {
   kiosk: boolean;
   orientation: 'landscape' | 'portrait';
   device_id: string | null;
+  room_id: string | null;
 }
 
 interface HostEntry {
@@ -18,6 +19,7 @@ interface Props {
   devices: DeviceStatus[];
   showUnpaired: boolean;
   onShowUnpairedChange: (v: boolean) => void;
+  onTriggerScan: () => Promise<void>;
   onClose: () => void;
 }
 
@@ -40,18 +42,34 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
   );
 }
 
-export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onClose }: Props) {
+export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTriggerScan, onClose }: Props) {
   const [hosts, setHosts] = useState<HostEntry[]>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [scanning, setScanning] = useState(false);
+  // Local room edits: identifier -> draft room string
+  const [roomDrafts, setRoomDrafts] = useState<Record<string, string>>({});
+  const [savingRoom, setSavingRoom] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetch('/api/admin/hosts').then(r => r.json()).then(setHosts).catch(() => {});
-    // Refresh every 5s while open
     const id = setInterval(() => {
       fetch('/api/admin/hosts').then(r => r.json()).then(setHosts).catch(() => {});
     }, 5000);
     return () => clearInterval(id);
   }, []);
+
+  // Initialise room drafts from device list
+  useEffect(() => {
+    setRoomDrafts(prev => {
+      const next = { ...prev };
+      for (const d of devices) {
+        if (!(d.identifier in next)) {
+          next[d.identifier] = d.room ?? '';
+        }
+      }
+      return next;
+    });
+  }, [devices]);
 
   async function update(clientId: string, patch: Partial<KioskConfig>) {
     const host = hosts.find(h => h.client_id === clientId);
@@ -70,7 +88,43 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onClos
     }
   }
 
+  async function saveRoom(identifier: string) {
+    const room = roomDrafts[identifier]?.trim() || null;
+    setSavingRoom(s => ({ ...s, [identifier]: true }));
+    try {
+      await fetch(`/api/devices/${encodeURIComponent(identifier)}/room`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room }),
+      });
+    } finally {
+      setSavingRoom(s => ({ ...s, [identifier]: false }));
+    }
+  }
+
+  // Derive unique room names from all devices (excluding empty/null)
+  const allRooms = Array.from(
+    new Set(devices.map(d => d.room).filter((r): r is string => !!r))
+  ).sort();
+
   const connectedDevices = devices.filter(d => d.connected);
+
+  // Encode kiosk binding select value: "room:Theater", "device:id", or ""
+  function bindingValue(cfg: KioskConfig): string {
+    if (cfg.device_id) return `device:${cfg.device_id}`;
+    if (cfg.room_id) return `room:${cfg.room_id}`;
+    return '';
+  }
+
+  function onBindingChange(clientId: string, value: string) {
+    if (!value) {
+      update(clientId, { device_id: null, room_id: null });
+    } else if (value.startsWith('room:')) {
+      update(clientId, { room_id: value.slice(5), device_id: null });
+    } else if (value.startsWith('device:')) {
+      update(clientId, { device_id: value.slice(7), room_id: null });
+    }
+  }
 
   return (
     <div
@@ -102,14 +156,80 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onClos
         </div>
 
         {/* Global settings */}
-        <div style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>Show unpaired devices</span>
-          <Toggle value={showUnpaired} onChange={onShowUnpairedChange} />
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
+            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>Show unpaired devices</span>
+            <Toggle value={showUnpaired} onChange={onShowUnpairedChange} />
+          </div>
+          <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+          <button
+            onClick={async () => { setScanning(true); try { await onTriggerScan(); } finally { setScanning(false); } }}
+            disabled={scanning}
+            style={{
+              fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.7)',
+              background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 7, padding: '5px 12px', cursor: scanning ? 'default' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+              opacity: scanning ? 0.5 : 1, transition: 'opacity 0.2s',
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+              style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }}>
+              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+            </svg>
+            {scanning ? 'Scanning…' : 'Scan'}
+          </button>
         </div>
 
-        {/* Host list */}
         <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '65vh', overflowY: 'auto' }}>
-          <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '2px 2px 4px' }}>Connected Hosts</p>
+
+          {/* ── Devices / rooms ── */}
+          <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '2px 2px 4px' }}>Devices</p>
+          {devices.length === 0 && (
+            <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14, textAlign: 'center', padding: '12px 0' }}>No devices</p>
+          )}
+          {[...devices].sort((a, b) => a.name.localeCompare(b.name)).map(device => (
+            <div key={device.identifier} style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.07)',
+              borderRadius: 10, padding: '10px 12px',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{device.name}</p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <input
+                  type="text"
+                  placeholder="Room…"
+                  value={roomDrafts[device.identifier] ?? ''}
+                  onChange={e => setRoomDrafts(prev => ({ ...prev, [device.identifier]: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') saveRoom(device.identifier); }}
+                  style={{
+                    fontSize: 12, padding: '4px 8px', borderRadius: 7, width: 120,
+                    background: 'rgba(255,255,255,0.07)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    color: '#fff', outline: 'none',
+                  }}
+                />
+                <button
+                  onClick={() => saveRoom(device.identifier)}
+                  disabled={savingRoom[device.identifier]}
+                  style={{
+                    fontSize: 11, padding: '4px 10px', borderRadius: 7, cursor: 'pointer',
+                    background: 'rgba(10,132,255,0.2)',
+                    border: '1px solid rgba(10,132,255,0.35)',
+                    color: '#0A84FF', opacity: savingRoom[device.identifier] ? 0.5 : 1,
+                  }}
+                >
+                  {savingRoom[device.identifier] ? '…' : 'Set'}
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {/* ── Connected hosts / kiosk ── */}
+          <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '10px 2px 4px' }}>Connected Hosts</p>
           {hosts.length === 0 && (
             <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14, textAlign: 'center', padding: '24px 0' }}>
               No connected hosts
@@ -163,12 +283,12 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onClos
                       </div>
                     </div>
 
-                    {/* Device binding */}
+                    {/* Binding: room or specific device */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', width: 80 }}>Device</span>
+                      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', width: 80 }}>Display</span>
                       <select
-                        value={cfg.device_id ?? ''}
-                        onChange={e => update(host.client_id, { device_id: e.target.value || null })}
+                        value={bindingValue(cfg)}
+                        onChange={e => onBindingChange(host.client_id, e.target.value)}
                         style={{
                           flex: 1, fontSize: 13, padding: '5px 10px', borderRadius: 8,
                           background: 'rgba(255,255,255,0.08)',
@@ -177,9 +297,20 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onClos
                         }}
                       >
                         <option value="">— Any active device —</option>
-                        {connectedDevices.map(d => (
-                          <option key={d.identifier} value={d.identifier}>{d.name}</option>
-                        ))}
+                        {allRooms.length > 0 && (
+                          <optgroup label="Room">
+                            {allRooms.map(r => (
+                              <option key={r} value={`room:${r}`}>{r} (any active)</option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {connectedDevices.length > 0 && (
+                          <optgroup label="Specific device">
+                            {connectedDevices.map(d => (
+                              <option key={d.identifier} value={`device:${d.identifier}`}>{d.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
                       </select>
                     </div>
                   </div>

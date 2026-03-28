@@ -27,6 +27,7 @@ export interface DeviceStatus {
   hostname: string;
   model: string;
   device_type?: 'appletv' | 'kaleidescape';
+  room: string | null;
   connected: boolean;
   power: string | null;
   now_playing: NowPlaying | null;

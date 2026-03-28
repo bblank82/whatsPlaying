@@ -109,12 +109,14 @@ def _register_known_device(status: dict) -> None:
     if not ident:
         return
     known = _load_known_devices()
+    existing = known.get(ident, {})
     known[ident] = {
         "identifier": ident,
         "name": status.get("name", ""),
         "address": status.get("address", ""),
         "model": status.get("model", ""),
         "device_type": status.get("device_type", "appletv"),
+        "room": existing.get("room"),  # preserve room assignment
     }
     _save_known_devices(known)
 
@@ -134,6 +136,7 @@ def _offline_status(info: dict) -> dict:
         "hostname": "",
         "model": info.get("model", ""),
         "device_type": info.get("device_type", "appletv"),
+        "room": info.get("room"),
         "connected": False,
         "power": None,
         "now_playing": None,
@@ -147,12 +150,13 @@ def _offline_status(info: dict) -> dict:
 clients: dict[str, DeviceClient] = {}          # identifier -> DeviceClient
 latest_statuses: dict[str, dict] = {}          # identifier -> last status snapshot
 active_pairings: dict[str, object] = {}        # pairing_id -> PairingHandler
+device_rooms: dict[str, Optional[str]] = {}    # identifier -> room name (in-memory cache)
 
 # WebSocket client registry
 # ws_clients: client_id -> {ws, ip, hostname}
 ws_clients: dict[str, dict] = {}
 # kiosk config per client_id — persists across reconnects for same IP
-# shape: {kiosk: bool, orientation: "landscape"|"portrait", device_id: str|None}
+# shape: {kiosk: bool, orientation: "landscape"|"portrait", device_id: str|None, room_id: str|None}
 kiosk_configs: dict[str, dict] = {}
 # ip -> client_id — allows restoring config when same host reconnects
 _ip_to_client_id: dict[str, str] = {}
@@ -235,6 +239,7 @@ async def polling_loop():
         statuses = []
         for client in list(clients.values()):
             status = await client.get_status()
+            status["room"] = device_rooms.get(client.identifier)
             latest_statuses[client.identifier] = status
             statuses.append(status)
 
@@ -259,6 +264,7 @@ async def lifespan(app: FastAPI):
     # Pre-populate device list from persisted known devices (shows as offline until found)
     for info in _load_known_devices().values():
         latest_statuses[info["identifier"]] = _offline_status(info)
+        device_rooms[info["identifier"]] = info.get("room")
 
     # Perform an immediate scan on startup
     loop = asyncio.get_running_loop()
@@ -740,6 +746,24 @@ async def forget_device(identifier: str):
     if client:
         await client.disconnect()
     latest_statuses.pop(identifier, None)
+    device_rooms.pop(identifier, None)
+    return {"success": True}
+
+
+class RoomBody(BaseModel):
+    room: Optional[str] = None
+
+
+@app.put("/api/devices/{identifier}/room")
+async def set_device_room(identifier: str, body: RoomBody):
+    """Assign or clear the room for a device."""
+    device_rooms[identifier] = body.room
+    known = _load_known_devices()
+    if identifier in known:
+        known[identifier]["room"] = body.room
+        _save_known_devices(known)
+    if identifier in latest_statuses:
+        latest_statuses[identifier]["room"] = body.room
     return {"success": True}
 
 
@@ -841,7 +865,7 @@ async def finish_pairing(identifier: str, body: PairFinishRequest):
 # ---------------------------------------------------------------------------
 
 def _default_kiosk_config() -> dict:
-    return {"kiosk": False, "orientation": "landscape", "device_id": None}
+    return {"kiosk": False, "orientation": "landscape", "device_id": None, "room_id": None}
 
 
 @app.get("/api/admin/hosts")
@@ -862,12 +886,13 @@ class KioskConfigBody(BaseModel):
     kiosk: bool
     orientation: str = "landscape"
     device_id: Optional[str] = None
+    room_id: Optional[str] = None
 
 
 @app.post("/api/admin/hosts/{client_id}/kiosk")
 async def admin_set_kiosk(client_id: str, body: KioskConfigBody):
     """Update kiosk config for a connected host and push the change via WebSocket."""
-    config = {"kiosk": body.kiosk, "orientation": body.orientation, "device_id": body.device_id}
+    config = {"kiosk": body.kiosk, "orientation": body.orientation, "device_id": body.device_id, "room_id": body.room_id}
     kiosk_configs[client_id] = config
 
     entry = ws_clients.get(client_id)
