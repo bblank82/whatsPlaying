@@ -256,12 +256,7 @@ Steps: `confirm_forget | starting | enter_pin | show_pin | finishing | done_part
 
 On mount: `requestFullscreen()`. On unmount: `exitFullscreen()`. Close on `fullscreenchange` (fullscreen exited) or `keydown Escape`.
 
-**Rotated portrait layout for TV display:**
-```
-width: 100vh, height: 100vw
-transform: translate(-50%, -50%) rotate(90deg)
-```
-This swaps viewport dimensions so content fills a physically portrait TV screen.
+**Fullscreen horizontal layout:** `position: absolute; inset: 0` — fills the display natively without rotation.
 
 **Layers (bottom to top):**
 1. Blurred background: `filter: blur(40px) brightness(0.3) saturate(1.4); transform: scale(1.1)` (scale prevents blur edges)

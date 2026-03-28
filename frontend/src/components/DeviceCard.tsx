@@ -3,6 +3,7 @@ import type { DeviceStatus } from '../types';
 import { NowPlaying } from './NowPlaying';
 import { RemoteModal } from './RemoteModal';
 import { ArtworkModal } from './ArtworkModal';
+import { parseHuluTitle, parsePlexTitle, detectPlexSeries, isGenericVideoTitle, ARTIST_AS_SERIES_APP_IDS, YOUTUBE_APP_IDS } from '../utils';
 
 // ---------------------------------------------------------------------------
 // Device icon
@@ -173,40 +174,57 @@ export function DeviceCard({ device, onPair }: Props) {
   }, [artworkCacheKey, isPlaying, isPaused, connected, identifier]);
 
   // ── Compound title parsing ─────────────────────────────────────────────────
-  // Hulu:  "Series | S5 E8 - Episode Title"
-  // Hulu:  "Series | S5 E8"
-  const huluMatch = /^(.+?)\s*\|\s*S(\d+)\s*E(\d+)(?:\s*[-–]\s*(.+))?$/i.exec(now_playing?.title ?? '');
+  const appId = now_playing?.app_id ?? null;
 
-  // Plex / Infuse: artist = series, album = "Season N", title = "S1 · E1: Episode Title"
-  const titleLooksLikeEpisode = /^S\d+\s*[·•\-]\s*E\d+/i.test(now_playing?.title ?? '');
-  const albumLooksLikeSeason  = /^season\s+\d+/i.test(now_playing?.album ?? '');
-  const artistAsSeries = (titleLooksLikeEpisode || albumLooksLikeSeason) ? (now_playing?.artist ?? null) : null;
+  // YouTube: no TMDB/scores lookups; uses separate thumbnail fetch
+  const isYouTube = YOUTUBE_APP_IDS.has(appId ?? '');
+
+  // Hulu embeds "Series | S5 E8 - Episode Title" in the title field
+  const huluMatch = appId === 'com.hulu.plus' ? parseHuluTitle(now_playing?.title ?? '') : null;
+
+  // Apps where artist=series and title=episode, identified by app_id
+  const artistIsSeriesByAppId = ARTIST_AS_SERIES_APP_IDS.has(appId ?? '') && !!now_playing?.artist;
+
+  // Plex / Infuse: detected from structural metadata (album="Season N" or S1·E1 title format)
+  const artistAsSeries =
+    artistIsSeriesByAppId ? (now_playing?.artist ?? null) :
+    detectPlexSeries(now_playing?.title ?? null, now_playing?.album ?? null, now_playing?.artist ?? null);
+
+  // For Plex, parse the structured title to extract clean S/E numbers and episode name
+  const plexTitle = artistAsSeries && !artistIsSeriesByAppId
+    ? parsePlexTitle(now_playing?.title ?? null)
+    : null;
 
   // Resolved fields — prefer native pyatv fields, then parsed, then raw
   const effectiveSeries: string | null =
-    now_playing?.series_name ??
-    (huluMatch ? huluMatch[1] : null) ??
-    artistAsSeries;
+    now_playing?.series_name ?? huluMatch?.series ?? artistAsSeries;
 
   const effectiveSeason: number | null =
-    now_playing?.season_number ?? (huluMatch ? parseInt(huluMatch[2]) : null);
+    now_playing?.season_number ?? huluMatch?.season ?? plexTitle?.season ?? null;
 
   const effectiveEpisode: number | null =
-    now_playing?.episode_number ?? (huluMatch ? parseInt(huluMatch[3]) : null);
+    now_playing?.episode_number ?? huluMatch?.episode ?? plexTitle?.episode ?? null;
 
   const effectiveEpisodeTitle: string | null =
-    huluMatch ? (huluMatch[4] ?? null) :
-    artistAsSeries ? now_playing?.title ?? null :
+    huluMatch ? huluMatch.episodeTitle :
+    plexTitle ? plexTitle.episodeTitle :
+    artistIsSeriesByAppId ? now_playing?.title ?? null :
     null;
 
-  // Determine content type for external lookups
-  const isVideo = !!(
+  const isGenericTitle = isGenericVideoTitle(now_playing?.title ?? null);
+
+  // YouTube content should never trigger TMDB/RT lookups (channel names don't resolve).
+  const isVideo = !isGenericTitle && !isYouTube && !!(
     effectiveSeries ||
     effectiveSeason != null ||
     (now_playing?.media_type?.toLowerCase().includes('video') && now_playing?.title)
   );
   const lookupTitle = effectiveSeries ?? now_playing?.title ?? null;
   const mediaTypeForApi = effectiveSeries ? 'show' : 'movie';
+  // Force the media type when we're confident — prevents popularity-based mismatches
+  // (e.g. "21" resolving to a TV show instead of the 2008 film).
+  // Confident when: no series data and media_type is explicitly Video.
+  const forceMediaType = !effectiveSeries && now_playing?.media_type === 'MediaType.Video';
 
   // RT scores
   const [scores, setScores] = useState<ScoreState | null>(null);
@@ -215,21 +233,49 @@ export function DeviceCard({ device, onPair }: Props) {
   useEffect(() => {
     if (!lookupTitle || !isVideo || !isActive) { setScores(null); return; }
     setScores(null);
-    fetch(`/api/scores?title=${encodeURIComponent(lookupTitle)}&media_type=${mediaTypeForApi}`)
+    const params = new URLSearchParams({ title: lookupTitle, media_type: mediaTypeForApi });
+    if (forceMediaType) params.set('force_media_type', 'true');
+    fetch(`/api/scores?${params}`)
       .then(r => r.json()).then(setScores).catch(() => {});
-  }, [lookupTitle, mediaTypeForApi, isVideo, isActive]);
+  }, [lookupTitle, mediaTypeForApi, forceMediaType, isVideo, isActive]);
 
   // TMDB poster (w500 for card thumbnail, original for modal)
   const [tmdbPosterUrl, setTmdbPosterUrl]     = useState<string | null>(null);
   const [tmdbFullsizeUrl, setTmdbFullsizeUrl] = useState<string | null>(null);
+  const [tmdbResolved, setTmdbResolved]       = useState(false);
   useEffect(() => {
-    if (!lookupTitle || !isVideo || !isActive) { setTmdbPosterUrl(null); setTmdbFullsizeUrl(null); return; }
-    fetch(`/api/tmdb?title=${encodeURIComponent(lookupTitle)}&media_type=${mediaTypeForApi}`)
+    if (!lookupTitle || !isVideo || !isActive) {
+      setTmdbPosterUrl(null); setTmdbFullsizeUrl(null); setTmdbResolved(false); return;
+    }
+    setTmdbResolved(false);
+    const params = new URLSearchParams({ title: lookupTitle, media_type: mediaTypeForApi });
+    if (forceMediaType) params.set('force_media_type', 'true');
+    fetch(`/api/tmdb?${params}`)
       .then(r => r.json()).then(d => {
         setTmdbPosterUrl(d.poster_url ?? null);
         setTmdbFullsizeUrl(d.fullsize_url ?? null);
-      }).catch(() => {});
-  }, [lookupTitle, mediaTypeForApi, isVideo, isActive]);
+      }).catch(() => {})
+      .finally(() => setTmdbResolved(true));
+  }, [lookupTitle, mediaTypeForApi, forceMediaType, isVideo, isActive]);
+  // App icon from iTunes — fetched when active and no content artwork is available
+  const [appIconUrl, setAppIconUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const appId = now_playing?.app_id ?? null;
+    if (!appId || !isActive) { setAppIconUrl(null); return; }
+    fetch(`/api/app_icon?bundle_id=${encodeURIComponent(appId)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setAppIconUrl(d?.url ?? null))
+      .catch(() => {});
+  }, [now_playing?.app_id, isActive]);
+
+  const [ytThumbUrl, setYtThumbUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isYouTube || !isActive || !now_playing?.title) { setYtThumbUrl(null); return; }
+    const params = new URLSearchParams({ title: now_playing.title });
+    if (now_playing.artist) params.set('channel', now_playing.artist);
+    fetch(`/api/youtube_thumbnail?${params}`)
+      .then(r => r.json()).then(d => setYtThumbUrl(d.thumbnail_url ?? null)).catch(() => {});
+  }, [isYouTube, isActive, now_playing?.title, now_playing?.artist]);
 
   // Modal state
   const [showRemote, setShowRemote]   = useState(false);
@@ -260,8 +306,11 @@ export function DeviceCard({ device, onPair }: Props) {
     await fetch(`/api/devices/${encodeURIComponent(identifier)}/control/${action}`, { method: 'POST' });
   }
 
-  const cardArtworkSrc      = tmdbPosterUrl ?? artworkUrl;
-  const artworkFullscreenSrc = tmdbFullsizeUrl ?? artworkUrl;
+  // Suppress pyatv artwork while TMDB is in-flight for video content — avoids the
+  // flash of wrong art before the poster loads.
+  const artworkFallback = (isVideo && !tmdbResolved) ? null : artworkUrl;
+  const cardArtworkSrc      = tmdbPosterUrl ?? ytThumbUrl ?? artworkFallback;
+  const artworkFullscreenSrc = tmdbFullsizeUrl ?? ytThumbUrl ?? artworkFallback;
 
   const borderColor = connected
     ? isPlaying ? 'rgba(48,209,88,0.35)' : 'rgba(255,255,255,0.1)'
@@ -304,18 +353,16 @@ export function DeviceCard({ device, onPair }: Props) {
                 onClick={() => control(isOn ? 'turn_off' : 'turn_on')}
                 title={isOn ? 'Standby' : 'Wake'}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 5,
+                  display: 'flex', alignItems: 'center',
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  color: isOn ? '#30D158' : 'rgba(255,255,255,0.2)',
+                  filter: isOn ? 'drop-shadow(0 0 4px rgba(48,209,88,0.55))' : 'none',
                 }}
               >
-                <span style={{ fontSize: 11, fontWeight: 500, color: isOn ? '#30D158' : 'rgba(255,255,255,0.3)' }}>
-                  {isOn ? 'On' : 'Standby'}
-                </span>
-                <div style={{
-                  width: 7, height: 7, borderRadius: '50%',
-                  background: isOn ? '#30D158' : 'rgba(255,255,255,0.15)',
-                  boxShadow: isOn ? '0 0 5px rgba(48,209,88,0.6)' : 'none',
-                }} />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="M12 3v6"/>
+                  <path d="M6.5 5A9 9 0 1 0 17.5 5"/>
+                </svg>
               </button>
               <button
                 onClick={() => onPair(identifier)}
@@ -363,8 +410,10 @@ export function DeviceCard({ device, onPair }: Props) {
                       src={cardArtworkSrc}
                       alt=""
                       style={{ height: 80, width: 'auto', display: 'block' }}
-                      onError={() => { if (tmdbPosterUrl) setTmdbPosterUrl(null); else setArtworkUrl(null); }}
+                      onError={() => { if (tmdbPosterUrl) setTmdbPosterUrl(null); else if (ytThumbUrl) setYtThumbUrl(null); else setArtworkUrl(null); }}
                     />
+                  ) : (isPlaying || isPaused) && appIconUrl ? (
+                    <img src={appIconUrl} alt="" style={{ width: 80, height: 80, objectFit: 'cover', display: 'block' }} />
                   ) : (
                     <DeviceIcon model={model ?? 'Unknown'} name={name} dim={!connected} />
                   )}

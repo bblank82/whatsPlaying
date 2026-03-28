@@ -127,13 +127,10 @@ export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceN
         transform: 'scale(1.1)',
       }} />
 
-      {/* Rotated portrait container — width/height swapped so it fills a portrait TV */}
+      {/* Fullscreen horizontal kiosk container */}
       <div style={{
         position: 'absolute',
-        top: '50%', left: '50%',
-        width: '100vh',   // becomes the portrait width after rotation
-        height: '100vw',  // becomes the portrait height after rotation
-        transform: 'translate(-50%, -50%) rotate(90deg)',
+        inset: 0,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -147,8 +144,8 @@ export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceN
           position: 'absolute', top: 0, left: 0, right: 0,
           padding: '5vmin 6vmin 10vmin',
           display: 'flex', alignItems: 'center', gap: 10,
-          zIndex: 2,
-          background: 'linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.5) 60%, transparent 100%)',
+          zIndex: 3,
+          background: 'none',
         }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="rgba(255,255,255,0.7)" stroke="none">
             <polygon points="5 3 19 12 5 21 5 3"/>
@@ -167,10 +164,20 @@ export function ArtworkModal({ src, nowPlaying, effectiveSeries, scores, deviceN
             inset: 0,
             width: '100%',
             height: '100%',
-            objectFit: 'cover',
-            objectPosition: 'center top',
+            objectFit: 'contain',
+            objectPosition: 'center center',
           }}
         />
+
+        {/* Top vignette — softens the upper edge of the artwork */}
+        <div style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0,
+          height: '30%',
+          background: 'linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 50%, transparent 100%)',
+          pointerEvents: 'none',
+          zIndex: 2,
+        }} />
 
         {/* Strong gradient over the bottom so info text is readable */}
         <div style={{

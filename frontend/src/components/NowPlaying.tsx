@@ -1,15 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NowPlaying as NowPlayingType } from '../types';
-
-function formatTime(s: number | null): string {
-  if (s == null) return '';
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = Math.floor(s % 60);
-  return h > 0
-    ? `${h}:${m.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}`
-    : `${m}:${sec.toString().padStart(2,'0')}`;
-}
+import { formatTime, appLabel } from '../utils';
 
 function Equalizer() {
   return (
@@ -24,33 +15,6 @@ function Equalizer() {
   );
 }
 
-// Map known Apple TV bundle IDs to friendly names
-const APP_NAMES: Record<string, string> = {
-  'com.netflix.Netflix': 'Netflix',
-  'com.apple.TVWatchList': 'Apple TV+',
-  'com.apple.TVMovies': 'Movies',
-  'com.apple.TVShows': 'TV Shows',
-  'com.apple.TVMusic': 'Apple Music',
-  'com.apple.TVHomeSharing': 'Home Sharing',
-  'com.hulu.plus': 'Hulu',
-  'com.amazon.aiv.AIVApp': 'Prime Video',
-  'com.disney.disneyplus': 'Disney+',
-  'com.hbo.hbonow': 'Max',
-  'com.spotify.client': 'Spotify',
-  'com.plex.plex-tv': 'Plex',
-  'com.apple.TVAirPlay': 'AirPlay',
-  'com.apple.TVPhotos': 'Photos',
-  'com.apple.TVYouTube': 'YouTube',
-  'com.google.ios.youtube': 'YouTube',
-  'com.madebysofa.Infuse': 'Infuse',
-  'com.firecore.infuse7': 'Infuse',
-};
-
-function appLabel(appId: string | null): string | null {
-  if (!appId) return null;
-  return APP_NAMES[appId] ?? appId.split('.').pop() ?? appId;
-}
-
 interface Props {
   nowPlaying: NowPlayingType | null;
   onSeek?: (position: number) => void;
@@ -59,40 +23,25 @@ interface Props {
 }
 
 export function NowPlaying({ nowPlaying, onSeek, belowBar, resolvedSeries }: Props) {
-  if (!nowPlaying) {
-    return <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>No media info</p>;
-  }
+  // Destructure with defaults so hooks below are always called unconditionally.
+  const {
+    device_state = '', title = null, artist = null, album = null,
+    series_name = null, season_number = null, episode_number = null,
+    position = null, total_time = null, app_id = null, app_name = null,
+  } = nowPlaying ?? {};
 
-  const { device_state, title, artist, album, series_name, season_number, episode_number, position, total_time, app_id, app_name } = nowPlaying;
   const state = device_state.toLowerCase();
   const isPlaying = state.includes('playing');
   const isPaused  = state.includes('paused');
   const isIdle    = state.includes('idle') && !title;
-  // Prefer device-reported name, fall back to our lookup table
   const displayApp = app_name ?? appLabel(app_id);
-
-  if (isIdle) {
-    // If we know what app is in the foreground, show it even without media details
-    if (displayApp) {
-      return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)' }}>{displayApp}</p>
-          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.2)' }}>· no media info</p>
-        </div>
-      );
-    }
-    return <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>Idle</p>;
-  }
 
   // resolvedSeries may come from the artist field (Plex and similar apps that encode
   // TV show metadata as: artist=series, album="Season N", title="S1 · E1: Episode Title")
   const effectiveSeries = series_name ?? resolvedSeries ?? null;
-
-  // For TV shows: title may be episode name, series_name is the show
-  // Layout: primary = series name; secondary = episode title + S/E info
   const isTvShow = !!(effectiveSeries || (season_number != null) || (episode_number != null));
-
-  const primaryTitle = isTvShow ? (effectiveSeries ?? title) : title;
+  // Fall back to app name when no content title is available (e.g. Netflix blocking metadata)
+  const primaryTitle = isTvShow ? (effectiveSeries ?? title) : (title ?? ((isPlaying || isPaused) ? displayApp : null));
 
   const subtitle = (() => {
     if (isTvShow) {
@@ -111,7 +60,9 @@ export function NowPlaying({ nowPlaying, onSeek, belowBar, resolvedSeries }: Pro
     return null;
   })();
 
-  // Interpolate position client-side — tick forward every second while playing
+  // Interpolate position client-side — tick forward every second while playing.
+  // Hooks must be called unconditionally (Rules of Hooks), so they live before any
+  // early returns.
   const baseRef = useRef<{ position: number; at: number } | null>(null);
   const [livePosition, setLivePosition] = useState<number | null>(position);
 
@@ -145,6 +96,22 @@ export function NowPlaying({ nowPlaying, onSeek, belowBar, resolvedSeries }: Pro
   }, [isPlaying, total_time]);
 
   const pct = total_time && livePosition != null ? Math.min(100, (livePosition / total_time) * 100) : null;
+
+  // Early returns — after all hooks
+  if (!nowPlaying) {
+    return <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>No media info</p>;
+  }
+  if (isIdle) {
+    if (displayApp) {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)' }}>{displayApp}</p>
+          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.2)' }}>· no media info</p>
+        </div>
+      );
+    }
+    return <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>Idle</p>;
+  }
 
   return (
     <div>

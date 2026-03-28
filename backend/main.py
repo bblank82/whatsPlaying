@@ -7,6 +7,7 @@ import logging
 import os
 import plistlib
 import random
+import re
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -109,7 +110,7 @@ async def _connect_conf(conf) -> None:
 
 async def discovery_loop():
     """Periodically scan for new (or removed) Apple TV devices."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     while True:
         try:
             found = [c for c in await pyatv.scan(loop, timeout=5) if _is_appletv(c)]
@@ -178,7 +179,7 @@ async def polling_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Perform an immediate scan on startup
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     found = [c for c in await pyatv.scan(loop, timeout=5) if _is_appletv(c)]
 
     # Add extra hosts (cross-subnet devices mDNS can't reach)
@@ -288,6 +289,50 @@ async def control_device(identifier: str, action: str, pos: Optional[float] = No
         return {"error": str(exc)}
 
 
+# iTunes bundle ID → app icon URL (fetched once, cached in memory)
+_app_icon_cache: dict[str, Optional[str]] = {}
+
+# Known overrides for bundle IDs that don't resolve on the iOS App Store
+_APP_ICON_OVERRIDES: dict[str, str] = {
+    'com.plexapp.plex': 'com.plexapp.plex',  # uses iOS bundle ID
+}
+# Bundle IDs that have no iOS equivalent — skip the lookup
+_APP_ICON_NO_LOOKUP: set[str] = {'com.apple.TVWatchList', 'com.apple.TVMusic', 'com.apple.TVHomeSharing'}
+
+
+async def _fetch_app_icon(bundle_id: str) -> Optional[str]:
+    """Return an iTunes 512px icon URL for a given bundle ID, with in-memory cache."""
+    if bundle_id in _app_icon_cache:
+        return _app_icon_cache[bundle_id]
+    if bundle_id in _APP_ICON_NO_LOOKUP:
+        _app_icon_cache[bundle_id] = None
+        return None
+    lookup_id = _APP_ICON_OVERRIDES.get(bundle_id, bundle_id)
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                "https://itunes.apple.com/lookup",
+                params={"bundleId": lookup_id, "country": "us", "entity": "software"},
+            )
+        results = r.json().get("results", [])
+        url = results[0].get("artworkUrl512") if results else None
+        _app_icon_cache[bundle_id] = url
+        return url
+    except Exception as exc:
+        logger.debug("iTunes icon lookup failed for %s: %s", bundle_id, exc)
+        _app_icon_cache[bundle_id] = None
+        return None
+
+
+@app.get("/api/app_icon")
+async def get_app_icon(bundle_id: str):
+    """Return the iTunes App Store icon URL for a bundle ID."""
+    url = await _fetch_app_icon(bundle_id)
+    if not url:
+        return Response(status_code=404)
+    return {"url": url}
+
+
 @app.get("/api/devices/{identifier}/artwork")
 async def get_artwork(identifier: str):
     """Return current artwork for a device (JPEG/PNG bytes)."""
@@ -307,7 +352,7 @@ async def get_artwork(identifier: str):
 @app.post("/api/scan")
 async def trigger_scan():
     """Manually trigger a device scan."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     found = [c for c in await pyatv.scan(loop, timeout=5) if _is_appletv(c)]
     new_devices = []
     for conf in found:
@@ -326,43 +371,57 @@ async def trigger_scan():
 
 def _clean_title(title: str) -> str:
     """Strip trailing year annotations like '(1996)' or '[2024]' from titles."""
-    import re as _re
-    return _re.sub(r'\s*[\(\[]\d{4}[\)\]]\s*$', '', title).strip()
+    return re.sub(r'\s*[\(\[]\d{4}[\)\]]\s*$', '', title).strip()
 
 
-async def _tmdb_best(client, title: str, hint: str) -> tuple:
+async def _tmdb_best(client, title: str, hint: str, force_hint: bool = False) -> tuple:
     """Search TMDB for both movie and TV; return (kind, tmdb_id, imdb_id) for the best match.
 
-    ``hint`` is 'movie' or 'show' from the caller — used only as a tiebreaker when
-    popularity scores are within 20% of each other.
+    ``hint`` is 'movie' or 'show' from the caller.  When ``force_hint`` is True the hint
+    is treated as authoritative and only the matching type is searched, skipping the
+    popularity comparison.  Use this when the media type is known with high confidence
+    (e.g. Plex reporting MediaType.Video with no series metadata).
     """
-    movie_r, tv_r = await asyncio.gather(
-        client.get(f"https://api.themoviedb.org/3/search/movie",
-                   params={"api_key": TMDB_API_KEY, "query": title}),
-        client.get(f"https://api.themoviedb.org/3/search/tv",
-                   params={"api_key": TMDB_API_KEY, "query": title}),
-    )
-    movies = movie_r.json().get("results", [])
-    shows  = tv_r.json().get("results", [])
-    bm = movies[0] if movies else None
-    bs = shows[0]  if shows  else None
-
-    if bm and not bs:
-        kind, item = "movie", bm
-    elif bs and not bm:
-        kind, item = "tv", bs
+    if force_hint:
+        search_type = "movie" if hint == "movie" else "tv"
+        r = await client.get(
+            f"https://api.themoviedb.org/3/search/{search_type}",
+            params={"api_key": TMDB_API_KEY, "query": title},
+        )
+        results = r.json().get("results", [])
+        item = results[0] if results else None
+        kind = search_type
     else:
-        mp = bm.get("popularity", 0) if bm else 0
-        sp = bs.get("popularity", 0) if bs else 0
-        # Prefer the significantly more popular result; fall back to hint
-        if sp > mp * 1.2:
-            kind, item = "tv", bs
-        elif mp > sp * 1.2:
+        movie_r, tv_r = await asyncio.gather(
+            client.get("https://api.themoviedb.org/3/search/movie",
+                       params={"api_key": TMDB_API_KEY, "query": title}),
+            client.get("https://api.themoviedb.org/3/search/tv",
+                       params={"api_key": TMDB_API_KEY, "query": title}),
+        )
+        movies = movie_r.json().get("results", [])
+        shows  = tv_r.json().get("results", [])
+        bm = movies[0] if movies else None
+        bs = shows[0]  if shows  else None
+
+        if bm and not bs:
             kind, item = "movie", bm
+        elif bs and not bm:
+            kind, item = "tv", bs
         else:
-            kind, item = ("tv", bs) if hint == "show" else ("movie", bm)
+            mp = bm.get("popularity", 0) if bm else 0
+            sp = bs.get("popularity", 0) if bs else 0
+            # Prefer the significantly more popular result; fall back to hint
+            if sp > mp * 1.2:
+                kind, item = "tv", bs
+            elif mp > sp * 1.2:
+                kind, item = "movie", bm
+            else:
+                kind, item = ("tv", bs) if hint == "show" else ("movie", bm)
 
     tmdb_id = item.get("id") if item else None
+    # Extract release year for disambiguation (movies: release_date, TV: first_air_date)
+    date_str = (item or {}).get("release_date") or (item or {}).get("first_air_date") or ""
+    year = int(date_str[:4]) if date_str and date_str[:4].isdigit() else None
     imdb_id = None
     if tmdb_id:
         ext = await client.get(
@@ -370,43 +429,51 @@ async def _tmdb_best(client, title: str, hint: str) -> tuple:
             params={"api_key": TMDB_API_KEY},
         )
         imdb_id = ext.json().get("imdb_id")
-    return kind, tmdb_id, imdb_id
+    return kind, tmdb_id, imdb_id, year
 
 
 def _rt_score_from_page(html: str) -> Optional[int]:
     """Extract tomatometer from an RT movie/show page via JSON-LD ratingValue."""
-    import re as _re
-    m = _re.search(r'"ratingValue"\s*:\s*"(\d+)"', html)
+    m = re.search(r'"ratingValue"\s*:\s*"(\d+)"', html)
     if m:
         return int(m.group(1))
     return None
 
 
 def _rt_direct_url(html: str, title: str, media_type: str) -> Optional[str]:
-    """Parse RT search page HTML to find the direct URL for the best-matching result."""
-    import re as _re
+    """Parse RT search page HTML to find the direct URL for the best-matching result.
+
+    Returns None if no candidate has a title that is a close match — callers should
+    fall back to the RT search URL rather than linking to the wrong page.
+    """
     prefix = "/tv/" if media_type == "show" else "/m/"
     # Extract (url, link_text) from data-qa="info-name" anchors
-    pattern = _re.compile(
-        r'href="(https://www\.rottentomatoes\.com' + _re.escape(prefix) + r'[^"]+)"[^>]*data-qa="info-name"[^>]*>\s*(.*?)\s*</a>',
-        _re.DOTALL,
+    pattern = re.compile(
+        r'href="(https://www\.rottentomatoes\.com' + re.escape(prefix) + r'[^"]+)"[^>]*data-qa="info-name"[^>]*>\s*(.*?)\s*</a>',
+        re.DOTALL,
     )
-    candidates = [(m.group(1), _re.sub(r'<[^>]+>', '', m.group(2)).strip()) for m in pattern.finditer(html)]
+    candidates = [(m.group(1), re.sub(r'<[^>]+>', '', m.group(2)).strip()) for m in pattern.finditer(html)]
     if not candidates:
         return None
-    # Exact match first, then closest
     title_lower = title.lower()
+    # Exact match
     for url, name in candidates:
         if name.lower() == title_lower:
             return url
-    # Fallback: first result
-    return candidates[0][0]
+    # Partial match: candidate name starts with the title (handles "21 (2008)", "The Bear (2022)")
+    for url, name in candidates:
+        name_lower = name.lower()
+        if name_lower.startswith(title_lower) and (
+            len(name_lower) == len(title_lower) or not name_lower[len(title_lower)].isalnum()
+        ):
+            return url
+    # No close match — return None so caller uses RT search URL instead
+    return None
 
 
 @app.get("/api/scores")
-async def get_rt_scores(title: str, media_type: str = "movie"):
+async def get_rt_scores(title: str, media_type: str = "movie", force_media_type: bool = False):
     """Return RT critic score via TMDB → OMDB, with a direct RT page URL scraped from RT search."""
-    import httpx
     title = _clean_title(title)
     rt_search_url = f"https://www.rottentomatoes.com/search?search={url_quote(title)}"
 
@@ -415,16 +482,21 @@ async def get_rt_scores(title: str, media_type: str = "movie"):
             # Step 1: Use _tmdb_best to find correct kind + imdb_id
             imdb_id = None
             kind = "movie"
+            year = None
             if TMDB_API_KEY:
-                kind, _tmdb_id, imdb_id = await _tmdb_best(client, title, media_type)
+                kind, _tmdb_id, imdb_id, year = await _tmdb_best(client, title, media_type, force_hint=force_media_type)
 
             if not imdb_id:
                 return {"tomatometer": None, "audience_score": None, "url": rt_search_url}
 
+            # Use "title year" for RT search when year is known — prevents short/ambiguous
+            # titles (e.g. "21") from matching unrelated results on RT.
+            rt_search_query = f"{title} {year}" if year else title
+
             # Step 1b + 2: OMDB and RT search in parallel
             omdb_resp, rt_resp = await asyncio.gather(
                 client.get("https://www.omdbapi.com/", params={"i": imdb_id, "apikey": OMDB_API_KEY}),
-                client.get("https://www.rottentomatoes.com/search", params={"search": title},
+                client.get("https://www.rottentomatoes.com/search", params={"search": rt_search_query},
                            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}),
             )
 
@@ -438,7 +510,8 @@ async def get_rt_scores(title: str, media_type: str = "movie"):
             imdb_raw = ratings.get("Internet Movie Database")
             imdb_rating  = imdb_raw.split("/")[0] if imdb_raw else None
 
-            # Parse RT search page for direct URL (use resolved kind, not the hint)
+            # Parse RT search page for direct URL — try with year query first, fall back
+            # to title-only match to handle cases where RT omits the year from the slug.
             rt_kind = "show" if kind == "tv" else "movie"
             rt_url = _rt_direct_url(rt_resp.text, title, rt_kind) or rt_search_url
 
@@ -466,15 +539,14 @@ async def get_rt_scores(title: str, media_type: str = "movie"):
 
 
 @app.get("/api/tmdb")
-async def get_tmdb(title: str, media_type: str = "movie"):
+async def get_tmdb(title: str, media_type: str = "movie", force_media_type: bool = False):
     """Look up TMDB for high-res poster art. Requires TMDB_API_KEY env var."""
     if not TMDB_API_KEY:
         return {"available": False}
-    import httpx
     title = _clean_title(title)
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            kind, tmdb_id, _imdb_id = await _tmdb_best(client, title, media_type)
+            kind, tmdb_id, _imdb_id, _year = await _tmdb_best(client, title, media_type, force_hint=force_media_type)
             if not tmdb_id:
                 return {"available": False}
             # Fetch full details for poster path
@@ -492,6 +564,36 @@ async def get_tmdb(title: str, media_type: str = "movie"):
             }
     except Exception as exc:
         logger.debug("TMDB lookup failed for %r: %s", title, exc)
+    return {"available": False}
+
+
+_YT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+@app.get("/api/youtube_thumbnail")
+async def get_youtube_thumbnail(title: str, channel: Optional[str] = None):
+    """Scrape YouTube search to find a thumbnail for a video by title + channel."""
+    query = f"{title} {channel}".strip() if channel else title
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+            r = await client.get(
+                "https://www.youtube.com/results",
+                params={"search_query": query},
+                headers=_YT_HEADERS,
+            )
+        # YouTube embeds {"videoId":"..."} in the page JSON — first unique ID is the top result
+        ids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', r.text)
+        video_id = next((id for id in ids if id), None) if ids else None
+        if not video_id:
+            return {"available": False}
+        return {
+            "available": True,
+            "thumbnail_url": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+            "video_id": video_id,
+        }
+    except Exception as exc:
+        logger.debug("YouTube thumbnail lookup failed for %r: %s", query, exc)
     return {"available": False}
 
 
@@ -528,7 +630,7 @@ async def start_pairing(identifier: str):
     if not candidates:
         return {"error": "All supported protocols are already paired"}
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     pairing = None
     last_error = ""
     chosen_protocol = None

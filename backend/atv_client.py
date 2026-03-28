@@ -41,6 +41,8 @@ class DeviceClient(PushListener):
         self._hostname: Optional[str] = None
         self._cached_playing: Optional[dict] = None  # last push update
         self._app_map: dict[str, str] = {}           # bundle_id -> display name
+        self._current_app_id:   Optional[str] = None
+        self._current_app_name: Optional[str] = None
 
     # ------------------------------------------------------------------
     # PushListener callbacks
@@ -65,7 +67,7 @@ class DeviceClient(PushListener):
                 if proto_name in stored:
                     svc.credentials = stored[proto_name]
 
-            self._atv = await pyatv.connect(self.conf, asyncio.get_event_loop())
+            self._atv = await pyatv.connect(self.conf, asyncio.get_running_loop())
             self._connected = True
 
             # Subscribe to push updates for real-time playback state
@@ -120,6 +122,15 @@ class DeviceClient(PushListener):
         try:
             base["power"] = str(self._atv.power.power_state)
 
+            # Get currently active app — more reliable than app_id on the playing state
+            try:
+                active_app = self._atv.metadata.app
+                if active_app:
+                    self._current_app_id   = active_app.identifier
+                    self._current_app_name = active_app.name
+            except Exception:
+                pass
+
             if self._cached_playing is not None:
                 # Prefer push-delivered state — it's more accurate than polling
                 base["now_playing"] = self._cached_playing
@@ -127,6 +138,14 @@ class DeviceClient(PushListener):
                 # Fall back to poll once; result may be stale for Companion
                 playing = await self._atv.metadata.playing()
                 base["now_playing"] = _playing_to_dict(playing, self._app_map)
+
+            # Patch app_id/app_name into now_playing if the playing state didn't report them
+            if base["now_playing"] and not base["now_playing"].get("app_id"):
+                base["now_playing"] = {
+                    **base["now_playing"],
+                    "app_id":   self._current_app_id,
+                    "app_name": self._current_app_name or self._app_map.get(self._current_app_id or ""),
+                }
 
         except Exception as exc:
             logger.debug("Status fetch failed for %s: %s", self.name, exc)
