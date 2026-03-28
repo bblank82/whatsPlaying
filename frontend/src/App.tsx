@@ -41,11 +41,14 @@ export default function App() {
       const s = d.now_playing?.device_state?.toLowerCase() ?? '';
       return s.includes('playing') || s.includes('paused');
     };
+    const isPlaying = (d: (typeof devices)[0]) => d.now_playing?.device_state?.toLowerCase().includes('playing') ?? false;
     if (kioskConfig.room_id) {
-      const active = devices.find(d => d.room === kioskConfig.room_id && isActive(d));
+      const inRoom = devices.filter(d => d.room === kioskConfig.room_id && isActive(d));
+      const active = inRoom.find(d => isPlaying(d)) ?? inRoom[0];
       return active?.identifier === deviceId;
     }
-    const active = devices.find(d => isActive(d));
+    const allActive = devices.filter(d => isActive(d));
+    const active = allActive.find(d => isPlaying(d)) ?? allActive[0];
     return active?.identifier === deviceId;
   }
 

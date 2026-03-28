@@ -37,26 +37,20 @@ def _resolve_hostname(ip: str) -> str:
     return ip
 
 
-def _hms_to_seconds(hms: str) -> Optional[int]:
-    """Convert HH:MM:SS to total seconds, return None on failure."""
-    try:
-        parts = hms.strip().split(":")
-        if len(parts) == 3:
-            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-        if len(parts) == 2:
-            return int(parts[0]) * 60 + int(parts[1])
-    except Exception:
-        pass
-    return None
+def _unescape_kscape(value: str) -> str:
+    """Unescape Kaleidescape protocol value encoding (\\: → : and \\/ → /)."""
+    return value.replace('\\:', ':').replace('\\/', '/')
 
 
-# Map Kaleidescape play-state integers to pyatv-compatible state strings
+# Map Kaleidescape play-mode integers to pyatv-compatible state strings.
+# Per protocol manual: 0=nothing playing, 1=paused, 2=playing,
+# 4=forward scan, 6=reverse scan.
 _PLAY_STATE = {
     "0": "DeviceState.Idle",
     "1": "DeviceState.Paused",
     "2": "DeviceState.Playing",
-    "3": "DeviceState.Playing",   # scan forward — still "playing" for UI purposes
-    "4": "DeviceState.Playing",   # scan reverse
+    "4": "DeviceState.Playing",   # forward scan
+    "6": "DeviceState.Playing",   # reverse scan
 }
 
 
@@ -80,17 +74,17 @@ class KaleidescapeClient:
 
         # Cached state updated by push messages
         self._play_state: str = "DeviceState.Idle"
-        self._title: Optional[str] = None
-        self._movie_location: Optional[str] = None   # current handle
+        self._highlighted_handle: Optional[str] = None  # current HIGHLIGHTED_SELECTION handle
+        self._pending_content_handle: Optional[str] = None  # handle from latest CONTENT_DETAILS_OVERVIEW
         self._cover_url: Optional[str] = None
         self._position: Optional[int] = None
         self._duration: Optional[int] = None
-        self._content_type: Optional[str] = None     # "movie", "music", etc.
+        self._title: Optional[str] = None
         self._rating: Optional[str] = None
         self._year: Optional[int] = None
         self._model: str = "Kaleidescape"
         self._serial: Optional[str] = None
-        self._cpdid: str = "01"       # assigned CPDID; updated from DEVICE_INFO response
+        self._cpdid: str = "01"       # updated from DEVICE_INFO; used for ENABLE_EVENTS
         self._power_on: bool = False  # updated by DEVICE_POWER_STATE push; default off until confirmed
         # Sequence counter for outgoing commands (single digit 1-9 per spec)
         self._seq = 1
@@ -139,13 +133,13 @@ class KaleidescapeClient:
             logger.info("Connected to Kaleidescape at %s", self.address)
             await self._fetch_friendly_name()
 
-            # Request device info and enable push events
+            # Request device info — CPDID from response is used for ENABLE_EVENTS
             await self._send_raw("GET_DEVICE_INFO")
             await self._send_raw("GET_DEVICE_POWER_STATE")
             await self._send_raw("GET_PLAY_STATUS")
             await self._send_raw("GET_HIGHLIGHTED_SELECTION")
-            # Subscribe to events from the directly-connected device (CPDID 01)
-            await self._send_raw("ENABLE_EVENTS:01")
+            # Enable push events; re-issued with correct CPDID once DEVICE_INFO arrives
+            await self._send_raw(f"ENABLE_EVENTS:{self._cpdid}")
 
             # Start background reader
             self._reader_task = asyncio.create_task(self._read_loop())
@@ -200,8 +194,8 @@ class KaleidescapeClient:
             "pause":         "PAUSE",
             "play_pause":    "PAUSE",       # Kaleidescape uses PAUSE to toggle
             "stop":          "STOP",
-            "next":          "NEXT_TRACK",
-            "previous":      "PREVIOUS_TRACK",
+            "next":          "NEXT",
+            "previous":      "PREVIOUS",
             "skip_forward":  "SCAN_FORWARD",
             "skip_backward": "SCAN_REVERSE",
             # Navigation
@@ -277,8 +271,8 @@ class KaleidescapeClient:
             return  # comment / blank
         logger.debug("Kaleidescape << %r", line)
 
-        # Wire format: seq/device/code:STATUS_NAME:field1:field2:...:/checksum
-        # device is '1' for responses, '!' for push events — both must be handled.
+        # Wire format: device_id/seq/status_code:STATUS_NAME:field1:field2:...:/checksum
+        # seq is a digit for responses, '!' for push events — both handled by [^/]+
         m = re.match(r"^[^/]*/[^/]+/\d+:(\w+)(?::(.*))?$", line)
         if not m:
             logger.debug("Kaleidescape unmatched line: %r", line)
@@ -289,25 +283,28 @@ class KaleidescapeClient:
         fields = [f for f in raw.split(":") if f != ""]
 
         if status_name == "DEVICE_INFO":
-            # Fields: friendly_name:model:type:hardware:software:...
-            # Actual field layout varies by firmware; we just grab what we can
             self._parse_device_info(fields)
 
         elif status_name == "PLAY_STATUS":
             self._parse_play_status(fields)
 
         elif status_name == "MOVIE_LOCATION":
-            # Pushed when the highlighted/playing item changes: handle
+            # Location code: 00=UI/unknown, 03=main content, 04=intermission,
+            # 05=end credits, 06=disc menu. Not a content handle — ignore for metadata.
             if fields:
-                handle = fields[0]
-                if handle and handle != self._movie_location:
-                    self._movie_location = handle
-                    self._cover_url = f"http://{self.address}:{KSCAPE_PORT}/img/{handle}"
-                    # Request full content details for the new handle
-                    await self._send_raw(f"GET_CONTENT_DETAILS:{handle}")
+                logger.debug("Kaleidescape movie location: %s", fields[0])
+
+        elif status_name == "CONTENT_DETAILS_OVERVIEW":
+            # Signals start of a CONTENT_DETAILS block for a specific handle.
+            # Save the handle so we can discard lines from stale/racing requests.
+            handle = fields[1] if len(fields) > 1 else None
+            self._pending_content_handle = handle
+            logger.debug("Kaleidescape content details: %s lines for handle %s",
+                         fields[0] if fields else "?", handle)
 
         elif status_name == "CONTENT_DETAILS":
-            self._parse_content_details(fields)
+            # Per-line name/value pairs: line_num : name : value
+            self._parse_content_details_line(fields)
 
         elif status_name == "DEVICE_POWER_STATE":
             # Field 0: 0 = standby, 1 = on
@@ -316,20 +313,23 @@ class KaleidescapeClient:
                 logger.info("Kaleidescape power state: %s (%s)", fields[0], "on" if self._power_on else "standby")
 
         elif status_name == "HIGHLIGHTED_SELECTION":
-            # Same as MOVIE_LOCATION — use whichever arrives
-            if fields:
+            # Handle for the currently highlighted/playing item — use for content lookup
+            if fields and fields[0]:
                 handle = fields[0]
-                if handle and not self._movie_location:
-                    self._movie_location = handle
-                    self._cover_url = f"http://{self.address}:{KSCAPE_PORT}/img/{handle}"
-                    await self._send_raw(f"GET_CONTENT_DETAILS:{handle}")
+                if handle != self._highlighted_handle:
+                    self._highlighted_handle = handle
+                    # Clear stale metadata so old artwork isn't shown for the new title
+                    self._title = None
+                    self._cover_url = None
+                    self._rating = None
+                    self._year = None
+                    self._pending_content_handle = None
+                    # Request content details: format is GET_CONTENT_DETAILS:handle:passcode:
+                    # (empty passcode = no parental override needed)
+                    await self._send_raw(f"GET_CONTENT_DETAILS:{handle}:")
 
     def _parse_device_info(self, fields: list[str]):
         # Wire layout per spec: device_type : serial_num : cpdid : ip_address
-        # field[0] = device_type (deprecated int)
-        # field[1] = serial number (16-hex zero-padded)
-        # field[2] = assigned CPDID ("00" if none assigned)
-        # field[3] = ip_address
         try:
             if len(fields) >= 2 and fields[1]:
                 self._serial = fields[1]
@@ -345,52 +345,63 @@ class KaleidescapeClient:
         logger.info("Kaleidescape device: %s (%s)", self.name, self.identifier)
 
     def _parse_play_status(self, fields: list[str]):
-        # Wire layout: handle : play_state : chapter : chapter_pos_s :
-        #              chapter_dur_s : play_speed : title_pos_s : title_dur_s
-        # Times are 5-digit zero-padded seconds (e.g. "00000", "07200").
+        # Wire layout (protocol manual, section GET_PLAY_STATUS):
+        #   mode : speed : title_num : title_length : title_loc :
+        #   chap_num : chap_len : chap_loc
+        # All times are in seconds (zero-padded). No handle field.
         try:
-            # Field 0: movie handle ('0' or empty = nothing loaded)
-            if len(fields) > 0 and fields[0] and fields[0] != "0":
-                handle = fields[0]
-                if handle != self._movie_location:
-                    self._movie_location = handle
-                    self._cover_url = f"http://{self.address}:{KSCAPE_PORT}/img/{handle}"
+            # Field 0: play mode
+            if fields:
+                self._play_state = _PLAY_STATE.get(fields[0], "DeviceState.Idle")
 
-            # Field 1: play state
-            if len(fields) > 1:
-                self._play_state = _PLAY_STATE.get(fields[1], "DeviceState.Idle")
-
-            # Fields 6 & 7: title position and duration in seconds
-            if len(fields) > 6:
+            # Field 3: total title length in seconds
+            if len(fields) > 3:
                 try:
-                    self._position = int(fields[6])
+                    val = int(fields[3])
+                    self._duration = val if val > 0 else None
                 except ValueError:
                     pass
-            if len(fields) > 7:
+
+            # Field 4: current position within title in seconds
+            if len(fields) > 4:
                 try:
-                    self._duration = int(fields[7])
+                    val = int(fields[4])
+                    self._position = val if val >= 0 else None
                 except ValueError:
                     pass
 
         except Exception as exc:
             logger.debug("Kaleidescape play_status parse error: %s — fields: %s", exc, fields)
 
-    def _parse_content_details(self, fields: list[str]):
-        # Layout: handle, title, type, rating, year, ...
-        try:
-            if len(fields) > 1 and fields[1]:
-                self._title = fields[1]
-            if len(fields) > 2 and fields[2]:
-                self._content_type = fields[2].lower()
-            if len(fields) > 3 and fields[3]:
-                self._rating = fields[3]
-            if len(fields) > 4 and fields[4]:
-                try:
-                    self._year = int(fields[4])
-                except ValueError:
-                    pass
-        except Exception as exc:
-            logger.debug("Kaleidescape content_details parse error: %s", exc)
+    def _parse_content_details_line(self, fields: list[str]):
+        # Format: line_num : name : value
+        # Value may contain escaped colons (\\:) which, after splitting on ':', leave
+        # the value fragmented across fields[2:]. Re-join before unescaping.
+        if len(fields) < 3:
+            return
+        # Discard lines that belong to a stale request (racing HIGHLIGHTED_SELECTION changes)
+        if self._pending_content_handle != self._highlighted_handle:
+            logger.debug("Kaleidescape discarding stale content detail (pending=%s, current=%s)",
+                         self._pending_content_handle, self._highlighted_handle)
+            return
+        name = fields[1]
+        value = _unescape_kscape(":".join(fields[2:]))
+
+        if name == "Title":
+            self._title = value
+            logger.info("Kaleidescape title: %s", value)
+        elif name == "Cover_URL":
+            self._cover_url = value
+        elif name == "HiRes_cover_URL":
+            # Prefer HiRes — overwrite the standard Cover_URL
+            self._cover_url = value
+        elif name == "Rating":
+            self._rating = value
+        elif name == "Year":
+            try:
+                self._year = int(value)
+            except ValueError:
+                pass
 
     # ------------------------------------------------------------------
     # Status dict (same shape as DeviceClient.get_status)
@@ -417,7 +428,7 @@ class KaleidescapeClient:
                 "position": self._position,
                 "shuffle": None,
                 "repeat": None,
-                "artwork_id": self._movie_location,
+                "artwork_id": self._highlighted_handle,
                 "artwork_available": bool(self._cover_url),
                 "app_id": None,
                 "app_name": "Kaleidescape",

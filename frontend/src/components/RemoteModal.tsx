@@ -4,6 +4,7 @@ import { useDebug } from '../contexts/debug';
 interface Props {
   deviceId: string;
   deviceName: string;
+  deviceType?: string;
   onClose: () => void;
 }
 
@@ -45,7 +46,8 @@ function Btn({
   );
 }
 
-export function RemoteModal({ deviceId, deviceName, onClose }: Props) {
+export function RemoteModal({ deviceId, deviceName, deviceType, onClose }: Props) {
+  const isKaleidescape = deviceType === 'kaleidescape';
   const debug = useDebug();
   const send = useCallback(
     (action: string) => {
@@ -211,33 +213,51 @@ export function RemoteModal({ deviceId, deviceName, onClose }: Props) {
           </Btn>
         </div>
 
-        {/* Prev / Next */}
+        {/* Prev / Next (chapter for Kaleidescape) */}
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Btn onClick={() => send('previous')} title="Previous" style={{ width: 68, height: 34, borderRadius: 10 }}>
+          <Btn onClick={() => send('previous')} title={isKaleidescape ? 'Previous Chapter' : 'Previous'} style={{ width: 68, height: 34, borderRadius: 10, gap: 4, fontSize: 10, color: 'rgba(255,255,255,0.7)' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 20L9 12l10-8v16z"/><rect x="5" y="4" width="2.5" height="16" rx="1"/>
             </svg>
+            {isKaleidescape && <span>Ch</span>}
           </Btn>
-          <Btn onClick={() => send('next')} title="Next" style={{ width: 68, height: 34, borderRadius: 10 }}>
+          <Btn onClick={() => send('next')} title={isKaleidescape ? 'Next Chapter' : 'Next'} style={{ width: 68, height: 34, borderRadius: 10, gap: 4, fontSize: 10, color: 'rgba(255,255,255,0.7)' }}>
+            {isKaleidescape && <span>Ch</span>}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M5 4l10 8-10 8V4z"/><rect x="16.5" y="4" width="2.5" height="16" rx="1"/>
             </svg>
           </Btn>
         </div>
 
-        {/* Skip ±10 */}
+        {/* Skip / Scan */}
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <Btn onClick={() => send('skip_backward')} title="Back 10s" style={{ width: 68, height: 34, borderRadius: 10, gap: 3, fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M11 17a5 5 0 1 0 0-10H6"/><path d="M6 11l-3-3 3-3"/>
-            </svg>
-            10
+          <Btn onClick={() => send('skip_backward')} title={isKaleidescape ? 'Scan Reverse' : 'Back 10s'} style={{ width: 68, height: 34, borderRadius: 10, gap: 3, fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
+            {isKaleidescape ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M11 19l-9-7 9-7v14z"/><path d="M22 19l-9-7 9-7v14z"/>
+              </svg>
+            ) : (
+              <>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 17a5 5 0 1 0 0-10H6"/><path d="M6 11l-3-3 3-3"/>
+                </svg>
+                10
+              </>
+            )}
           </Btn>
-          <Btn onClick={() => send('skip_forward')} title="Forward 10s" style={{ width: 68, height: 34, borderRadius: 10, gap: 3, fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
-            10
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M13 17a5 5 0 1 1 0-10h5"/><path d="M18 11l3-3-3-3"/>
-            </svg>
+          <Btn onClick={() => send('skip_forward')} title={isKaleidescape ? 'Scan Forward' : 'Forward 10s'} style={{ width: 68, height: 34, borderRadius: 10, gap: 3, fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
+            {isKaleidescape ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M13 19l9-7-9-7v14z"/><path d="M2 19l9-7-9-7v14z"/>
+              </svg>
+            ) : (
+              <>
+                10
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M13 17a5 5 0 1 1 0-10h5"/><path d="M18 11l3-3-3-3"/>
+                </svg>
+              </>
+            )}
           </Btn>
         </div>
 

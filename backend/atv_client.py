@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import socket
+import time
 from typing import Optional
 
 import pyatv
@@ -40,6 +41,7 @@ class DeviceClient(PushListener):
         self._connected = False
         self._hostname: Optional[str] = None
         self._cached_playing: Optional[dict] = None  # last push update
+        self._cached_playing_ts: float = 0.0         # time.monotonic() of last push update
         self._app_map: dict[str, str] = {}           # bundle_id -> display name
         self._current_app_id:   Optional[str] = None
         self._current_app_name: Optional[str] = None
@@ -50,10 +52,13 @@ class DeviceClient(PushListener):
 
     def playstatus_update(self, updater, playstatus) -> None:
         self._cached_playing = _playing_to_dict(playstatus, self._app_map)
+        self._cached_playing_ts = time.monotonic()
         logger.debug("Push update for %s: %s", self.name, self._cached_playing)
 
     def playstatus_error(self, updater, exception) -> None:
-        logger.debug("Push update error for %s: %s", self.name, exception)
+        logger.debug("Push update error for %s: %s — clearing cached state", self.name, exception)
+        self._cached_playing = None
+        self._cached_playing_ts = 0.0
 
     # ------------------------------------------------------------------
     # Connection management
@@ -131,10 +136,35 @@ class DeviceClient(PushListener):
             except Exception:
                 pass
 
-            if self._cached_playing is not None:
+            # Detect app switch: if the current active app doesn't match the cached
+            # push state's app, the cache is stale — discard it and poll fresh.
+            cached_app = (self._cached_playing or {}).get("app_id")
+            cache_age = time.monotonic() - self._cached_playing_ts
+            app_switched = (
+                self._cached_playing is not None
+                and self._current_app_id is not None
+                and cached_app is not None
+                and cached_app != self._current_app_id
+            )
+            # Also discard if cache is older than 60 s with no push update
+            cache_stale = self._cached_playing is not None and cache_age > 60
+
+            if app_switched:
+                logger.debug(
+                    "App switch detected on %s: cache has %r, current is %r — discarding cache",
+                    self.name, cached_app, self._current_app_id,
+                )
+                self._cached_playing = None
+                self._cached_playing_ts = 0.0
+
+            if self._cached_playing is not None and not cache_stale:
                 # Prefer push-delivered state — it's more accurate than polling
                 base["now_playing"] = self._cached_playing
             else:
+                if cache_stale:
+                    logger.debug("Cached state for %s is %.0fs old — polling fresh", self.name, cache_age)
+                    self._cached_playing = None
+                    self._cached_playing_ts = 0.0
                 # Fall back to poll once; result may be stale for Companion
                 playing = await self._atv.metadata.playing()
                 base["now_playing"] = _playing_to_dict(playing, self._app_map)

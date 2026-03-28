@@ -8,13 +8,13 @@ Real-time home theater monitoring dashboard. Shows now-playing status, artwork, 
 
 - Live now-playing status and artwork for all devices
 - Remote control (transport, navigation, power) for Apple TV and Kaleidescape
-- Enriched metadata: TMDB poster art, Rotten Tomatoes and IMDb scores
-- **Room assignment** — group devices by room; kiosk can follow any active device in a room
+- Enriched metadata: TMDB poster art (season-specific for TV), Rotten Tomatoes and IMDb scores
+- **Room assignment** — group devices by room; kiosk follows the playing (not just active) device in a room
 - Fullscreen Now Playing kiosk mode (portrait or landscape)
 - Remote kiosk management — control any connected browser from the Settings panel
 - Settings panel with scan trigger, device room assignment, and debug console
 - PWA-ready (installable, fullscreen manifest)
-- Kaleidescape integration via TCP Control Protocol (port 10000)
+- Kaleidescape integration via TCP Control Protocol (port 10000) — title, artwork, chapter navigation, scan controls
 
 ---
 
@@ -123,7 +123,7 @@ appletv-monitor/
 | POST | `/api/devices/{id}/pair/start` | Begin Apple TV pairing |
 | POST | `/api/devices/{id}/pair/finish` | Complete pairing |
 | GET | `/api/scores` | RT + IMDb scores (`?title=&media_type=`) |
-| GET | `/api/tmdb` | TMDB poster art (`?title=&media_type=`) |
+| GET | `/api/tmdb` | TMDB poster art (`?title=&media_type=&season_number=&episode_title=`) |
 | GET | `/api/admin/hosts` | Connected browser clients with kiosk config |
 | POST | `/api/admin/hosts/{client_id}/kiosk` | Set kiosk config for a client |
 | WS | `/ws` | Real-time status stream |
@@ -140,13 +140,18 @@ Discovered via mDNS (`pyatv`). Cross-subnet devices can be added via `EXTRA_HOST
 ### Kaleidescape
 Configured via `KALEIDESCAPE_HOSTS`. Connects over TCP port 10000 using the Kaleidescape Control Protocol. Friendly device name is resolved by scraping `http://my-kaleidescape.local./components` on startup.
 
+- Title and cover art fetched via `GET_CONTENT_DETAILS` using the handle from `HIGHLIGHTED_SELECTION`
+- Push events enabled using the device's assigned CPDID (from `DEVICE_INFO`)
+- Transport controls: play/pause, scan forward/reverse, chapter previous/next
+- Progress bar seeking is not supported and is disabled in the UI
+
 ---
 
 ## Rooms
 
 Open the Settings panel and use the **Devices** section to assign each device to a named room (e.g. `Theater`, `Living Room`). Room names are free-form strings and are persisted across restarts.
 
-Kiosks can then be bound to a room instead of a specific device — the display will automatically follow whichever device in that room is actively playing.
+Kiosks can then be bound to a room instead of a specific device — the display will automatically follow whichever device in that room is actively playing. If multiple devices in the room are active, a **playing** device takes priority over a **paused** one.
 
 ---
 

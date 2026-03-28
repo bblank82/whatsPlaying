@@ -26,6 +26,7 @@ cd backend && source .venv/bin/activate && python main.py
 - Client: `backend/atv_client.py` (`DeviceClient`)
 - Credentials stored in `backend/credentials.json`
 - Known devices persisted in `backend/known_devices.json` — loaded on startup so offline devices still appear in the UI
+- Push state staleness: if `metadata.app` (live) differs from the cached push state's `app_id`, cache is discarded and a fresh poll runs. Cache older than 60 s is also discarded. `playstatus_error` clears the cache immediately.
 
 ### Kaleidescape
 - TCP Control Protocol on port 10000
@@ -39,9 +40,13 @@ cd backend && source .venv/bin/activate && python main.py
 - Wire format (commands TO device): `device_id/seq/COMMAND:params` — device_id is always `01`, seq is single digit 1-9 cycling. **Do NOT swap these** (common mistake: putting seq first)
 - Wire format (responses/events FROM device): `device_id/seq/status_code:STATUS_NAME:fields:/checksum` — seq is `!` for unsolicited push events
 - Protocol parser regex: `r"^[^/]*/[^/]+/\d+:(\w+)(?::(.*))?$"` — handles both `/1/` (responses) and `/!/` (push events); strips checksum with `re.sub(r":/\d+$", "", ...)`
-- `ENABLE_EVENTS:01:` — target is CPDID of device to receive events from, NOT a bitmask
+- `ENABLE_EVENTS:{cpdid}:` — target is the assigned CPDID from `DEVICE_INFO` field[2]; re-issued automatically when DEVICE_INFO arrives with a non-`00` CPDID. Initial connect uses `01` as default.
 - `DEVICE_POWER_STATE` field[0]: `"0"` = standby, `"1"` = on; error `020` = device is in standby (expected for most commands)
-- `PLAY_STATUS` field layout: `[handle, play_state, chapter, chapter_pos_s, chapter_dur_s, play_speed, title_pos_s, title_dur_s]`
+- `PLAY_STATUS` field layout: `[mode, speed, title_num, title_length, title_loc, chap_num, chap_len, chap_loc]` — no handle field; mode: 0=idle, 1=paused, 2=playing, 4=fwd scan, 6=rev scan
+- `CONTENT_DETAILS` comes in two parts: first `CONTENT_DETAILS_OVERVIEW:num_lines:handle:table:`, then N lines of `CONTENT_DETAILS:line_num:name:value:` (name/value pairs). Values are escaped: `\\:` → `:`, `\\/` → `/`
+- `GET_CONTENT_DETAILS` command format: `GET_CONTENT_DETAILS:handle:passcode:` — handle from `HIGHLIGHTED_SELECTION`, passcode is empty (two trailing colons in wire form via `_send_raw`)
+- `MOVIE_LOCATION` field[0] is a location code: `03`=main content, `04`=intermission, `05`=end credits — NOT a content handle
+- `HIGHLIGHTED_SELECTION` field[0] is the content handle to pass to `GET_CONTENT_DETAILS`
 - `DEVICE_INFO` field layout: `[device_type, serial, cpdid, ip]` — field[2] is assigned CPDID (`00` = none assigned)
 
 ## Frontend structure
@@ -81,8 +86,8 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - Per connected browser client: kiosk on/off, orientation (landscape/portrait), bound display target
 - Binding options (in priority order):
   1. Specific device (`device_id`) — always shows that device
-  2. Room (`room_id`) — shows the first playing/paused device in that room
-  3. None — shows any playing/paused device on the network
+  2. Room (`room_id`) — shows the active device in that room; playing takes priority over paused
+  3. None — shows any active device on the network; playing takes priority over paused
 - Portrait = CSS `transform: rotate(90deg)` on the inner canvas div with swapped `100vh/100vw`
 - True fullscreen: PWA manifest `display: fullscreen` + launch via `--app` flag
 - Clicking the artwork modal closes it when not in kiosk mode
@@ -102,6 +107,18 @@ Playing/paused → connected → disconnected; alphabetical within each group.
   - `←` (cyan): WebSocket messages received (`status_update` summarized as count, `client_hello`, `kiosk_config`)
 - Auto-scrolls to latest entry; Clear button; max 300 entries retained
 - Implemented via `DebugContext` (provides `log()` to DeviceCard, RemoteModal) + ref-based callback to `useDevices` hook (outside the context boundary)
+
+## TMDB poster art
+- `/api/tmdb` accepts optional `season_number` and `episode_title` params
+- For TV shows: if `season_number` is provided, fetches the season-specific poster
+- If `season_number` is absent but `episode_title` is given, infers the season by searching all season episode lists in parallel (`_find_season_by_episode`), then fetches that season's poster
+- Falls back to show-level poster if no season art exists
+- Frontend passes `episode_title = now_playing.title` whenever `effectiveSeries` is set and `effectiveSeason` is null (e.g. HBO Max doesn't report season metadata)
+
+## Kaleidescape controls
+- Card and remote show scan-reverse / scan-forward icons (⏪⏩) with no "10s" label — these are variable-speed scans, not fixed seeks
+- Chapter navigation buttons (PREVIOUS / NEXT wire commands) flank the scan buttons on the card; remote's Prev/Next row shows "Ch" label for Kaleidescape
+- Progress bar click-to-seek is disabled for Kaleidescape (`onSeek` passed as `undefined`)
 
 ## Key env vars (`backend/.env`)
 ```

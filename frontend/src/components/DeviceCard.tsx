@@ -450,7 +450,7 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <NowPlaying
                     nowPlaying={effectiveNowPlaying}
-                    onSeek={pos => {
+                    onSeek={isKaleidescape ? undefined : pos => {
                       debug.log('send', `set_position pos=${pos}`, name);
                       fetch(`/api/devices/${encodeURIComponent(identifier)}/control/set_position?pos=${pos}`, { method: 'POST' });
                     }}
@@ -470,13 +470,26 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
               }}>
                 {showControls && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <ControlButton onClick={() => control('skip_backward')} title="Back 10s">
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                        <svg width="16" height="13" viewBox="0 0 24 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M11 17a5 5 0 1 0 0-10H6"/><path d="M6 11l-3-3 3-3"/>
+                    {isKaleidescape && (
+                      <ControlButton onClick={() => control('previous')} title="Previous Chapter">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M19 20L9 12l10-8v16z"/><rect x="5" y="4" width="2.5" height="16" rx="1"/>
                         </svg>
-                        <span style={{ fontSize: 10, fontWeight: 700, lineHeight: 1 }}>10</span>
-                      </div>
+                      </ControlButton>
+                    )}
+                    <ControlButton onClick={() => control('skip_backward')} title={isKaleidescape ? 'Scan Reverse' : 'Back 10s'}>
+                      {isKaleidescape ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M11 19l-9-7 9-7v14z"/><path d="M22 19l-9-7 9-7v14z"/>
+                        </svg>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                          <svg width="16" height="13" viewBox="0 0 24 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M11 17a5 5 0 1 0 0-10H6"/><path d="M6 11l-3-3 3-3"/>
+                          </svg>
+                          <span style={{ fontSize: 10, fontWeight: 700, lineHeight: 1 }}>10</span>
+                        </div>
+                      )}
                     </ControlButton>
                     <ControlButton onClick={() => control('play_pause')} large>
                       {isPlaying ? (
@@ -489,14 +502,27 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
                         </svg>
                       )}
                     </ControlButton>
-                    <ControlButton onClick={() => control('skip_forward')} title="Forward 10s">
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                        <svg width="16" height="13" viewBox="0 0 24 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M13 17a5 5 0 1 1 0-10h5"/><path d="M18 11l3-3-3-3"/>
+                    <ControlButton onClick={() => control('skip_forward')} title={isKaleidescape ? 'Scan Forward' : 'Forward 10s'}>
+                      {isKaleidescape ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M13 19l9-7-9-7v14z"/><path d="M2 19l9-7-9-7v14z"/>
                         </svg>
-                        <span style={{ fontSize: 10, fontWeight: 700, lineHeight: 1 }}>10</span>
-                      </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                          <svg width="16" height="13" viewBox="0 0 24 20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M13 17a5 5 0 1 1 0-10h5"/><path d="M18 11l3-3-3-3"/>
+                          </svg>
+                          <span style={{ fontSize: 10, fontWeight: 700, lineHeight: 1 }}>10</span>
+                        </div>
+                      )}
                     </ControlButton>
+                    {isKaleidescape && (
+                      <ControlButton onClick={() => control('next')} title="Next Chapter">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M5 4l10 8-10 8V4z"/><rect x="16.5" y="4" width="2.5" height="16" rx="1"/>
+                        </svg>
+                      </ControlButton>
+                    )}
                   </div>
                 )}
 
@@ -554,7 +580,7 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
       </div>
 
       {showRemote && (
-        <RemoteModal deviceId={identifier} deviceName={name} onClose={() => setShowRemote(false)} />
+        <RemoteModal deviceId={identifier} deviceName={name} deviceType={device_type} onClose={() => setShowRemote(false)} />
       )}
       {(showArtwork || (kioskActive && artworkFullscreenSrc)) && artworkFullscreenSrc && (
         <ArtworkModal
