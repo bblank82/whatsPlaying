@@ -9,8 +9,10 @@ Real-time home theater monitoring dashboard. Shows now-playing status, artwork, 
 - Live now-playing status and artwork for all devices
 - Remote control (transport, navigation, power) for Apple TV and Kaleidescape
 - Enriched metadata: TMDB poster art, Rotten Tomatoes and IMDb scores
+- **Room assignment** — group devices by room; kiosk can follow any active device in a room
 - Fullscreen Now Playing kiosk mode (portrait or landscape)
 - Remote kiosk management — control any connected browser from the Settings panel
+- Settings panel with scan trigger, device room assignment, and debug console
 - PWA-ready (installable, fullscreen manifest)
 - Kaleidescape integration via TCP Control Protocol (port 10000)
 
@@ -77,21 +79,27 @@ appletv-monitor/
 │   ├── kscape_client.py   # Kaleidescape TCP Control Protocol client
 │   ├── credentials.py     # Pairing credential store
 │   ├── discovery.py       # mDNS + manual host discovery
+│   ├── test_utils.py      # pytest unit tests
 │   ├── requirements.txt
 │   └── .env
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx
 │   │   ├── types.ts
+│   │   ├── utils.ts
+│   │   ├── utils.test.ts  # vitest unit tests
 │   │   ├── hooks/useDevices.ts
+│   │   ├── contexts/debug.ts
 │   │   └── components/
 │   │       ├── DeviceCard.tsx
 │   │       ├── ArtworkModal.tsx
 │   │       ├── AdminModal.tsx
 │   │       ├── RemoteModal.tsx
+│   │       ├── NowPlaying.tsx
 │   │       └── PairModal.tsx
 │   ├── public/
 │   │   ├── logo.png
+│   │   ├── favicon.svg
 │   │   └── manifest.json
 │   └── dist/              # built output, served by backend
 ├── start.sh
@@ -108,17 +116,19 @@ appletv-monitor/
 | GET | `/api/devices` | All devices with latest status |
 | POST | `/api/devices/{id}/control/{action}` | Send remote command |
 | GET | `/api/devices/{id}/artwork` | Artwork image bytes |
+| PUT | `/api/devices/{id}/room` | Assign or clear a device's room |
+| DELETE | `/api/devices/{id}` | Forget device (credentials + known list) |
+| DELETE | `/api/devices/{id}/credentials` | Re-pair (forget credentials only) |
 | POST | `/api/scan` | Trigger manual network scan |
 | POST | `/api/devices/{id}/pair/start` | Begin Apple TV pairing |
 | POST | `/api/devices/{id}/pair/finish` | Complete pairing |
-| DELETE | `/api/devices/{id}/credentials` | Forget credentials |
 | GET | `/api/scores` | RT + IMDb scores (`?title=&media_type=`) |
 | GET | `/api/tmdb` | TMDB poster art (`?title=&media_type=`) |
-| GET | `/api/admin/hosts` | Connected browser clients |
+| GET | `/api/admin/hosts` | Connected browser clients with kiosk config |
 | POST | `/api/admin/hosts/{client_id}/kiosk` | Set kiosk config for a client |
 | WS | `/ws` | Real-time status stream |
 
-**Control actions:** `play`, `pause`, `play_pause`, `skip_forward`, `skip_backward`, `next`, `previous`, `set_position`, `up`, `down`, `left`, `right`, `select`, `menu`, `home`, `volume_up`, `volume_down`, `turn_on`, `turn_off`
+**Control actions:** `play`, `pause`, `play_pause`, `skip_forward`, `skip_backward`, `next`, `previous`, `set_position`, `up`, `down`, `left`, `right`, `select`, `menu`, `home`, `turn_on`, `turn_off`
 
 ---
 
@@ -132,11 +142,39 @@ Configured via `KALEIDESCAPE_HOSTS`. Connects over TCP port 10000 using the Kale
 
 ---
 
+## Rooms
+
+Open the Settings panel and use the **Devices** section to assign each device to a named room (e.g. `Theater`, `Living Room`). Room names are free-form strings and are persisted across restarts.
+
+Kiosks can then be bound to a room instead of a specific device — the display will automatically follow whichever device in that room is actively playing.
+
+---
+
 ## Kiosk Mode
 
 Open the Settings panel (gear icon, top-left) from any browser to:
 - Enable kiosk mode on any connected client
 - Set orientation (portrait rotates the display 90° via CSS transform)
-- Bind kiosk to a specific device
+- Bind the kiosk to a **room** (any active device in that room) or a **specific device**
+
+Clicking anywhere on the fullscreen artwork view dismisses it when not in kiosk mode.
 
 For true fullscreen, launch Chrome with `--app=http://{host}:8000` or install as a PWA.
+
+---
+
+## Settings Persistence
+
+`showUnpaired` and `debugMode` are saved to `localStorage` and restored on page load.
+
+---
+
+## Testing
+
+```bash
+# Backend
+cd backend && source .venv/bin/activate && python -m pytest test_utils.py -v
+
+# Frontend
+cd frontend && npm test -- --run
+```

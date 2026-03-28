@@ -24,7 +24,7 @@ cd backend && source .venv/bin/activate && python main.py
 ### Apple TV
 - Discovery via `pyatv` (mDNS + manual hosts via `EXTRA_HOSTS` env var)
 - Client: `backend/atv_client.py` (`DeviceClient`)
-- Credentials stored in `backend/credentials/`
+- Credentials stored in `backend/credentials.json`
 - Known devices persisted in `backend/known_devices.json` — loaded on startup so offline devices still appear in the UI
 
 ### Kaleidescape
@@ -45,11 +45,13 @@ cd backend && source .venv/bin/activate && python main.py
 - `DEVICE_INFO` field layout: `[device_type, serial, cpdid, ip]` — field[2] is assigned CPDID (`00` = none assigned)
 
 ## Frontend structure
-- `frontend/src/App.tsx` — main layout, device sort order, gear/admin button
-- `frontend/src/hooks/useDevices.ts` — WebSocket connection, device state, kiosk config
-- `frontend/src/components/DeviceCard.tsx` — per-device card, artwork, remote controls
-- `frontend/src/components/ArtworkModal.tsx` — fullscreen artwork (kiosk mode)
-- `frontend/src/components/AdminModal.tsx` — Settings panel (connected hosts, kiosk management, show unpaired toggle)
+- `frontend/src/App.tsx` — main layout, device sort order, gear/admin button, debug panel, kiosk logic
+- `frontend/src/hooks/useDevices.ts` — WebSocket connection, device state, kiosk config (including `room_id`)
+- `frontend/src/contexts/debug.ts` — React context for routing log entries to the debug panel
+- `frontend/src/components/DeviceCard.tsx` — per-device card, artwork, transport controls
+- `frontend/src/components/ArtworkModal.tsx` — fullscreen artwork; click-to-close when not in kiosk mode
+- `frontend/src/components/AdminModal.tsx` — Settings panel: show-unpaired toggle, scan button, room assignment per device, kiosk management, debug toggle
+- `frontend/src/components/RemoteModal.tsx` — navigation/transport remote (no volume buttons)
 - `frontend/src/components/PairModal.tsx` — pairing flow; has "Forget & Re-pair" and "Forget Device" (calls `DELETE /api/devices/{id}`)
 - `frontend/src/types.ts` — shared TypeScript types
 
@@ -57,10 +59,17 @@ cd backend && source .venv/bin/activate && python main.py
 Playing/paused → connected → disconnected; alphabetical within each group.
 
 ## Device persistence
-- `backend/known_devices.json` — persists `{identifier, name, address, model, device_type}` for all seen devices
-- Loaded at startup: pre-populates `latest_statuses` with offline entries so devices appear immediately
-- Written whenever a new device connects (`_connect_conf`)
-- Forget device: `DELETE /api/devices/{id}` removes from known list, credentials, clients, and statuses
+- `backend/known_devices.json` — persists `{identifier, name, address, model, device_type, room}` for all seen devices
+- Loaded at startup: pre-populates `latest_statuses` and `device_rooms` with offline entries so devices appear immediately
+- Written whenever a new device connects (`_connect_conf`) — preserves existing `room` field
+- Forget device: `DELETE /api/devices/{id}` removes from known list, credentials, clients, statuses, and `device_rooms`
+
+## Room concept
+- Each device can be assigned to a named room (string, e.g. `"Theater"`, `"Living Room"`)
+- Room is set via `PUT /api/devices/{id}/room` — persisted in `known_devices.json` and in the `device_rooms` in-memory cache
+- Room is injected into every device status dict in the polling loop
+- Kiosk can be bound to a room: it activates on the first playing/paused device in that room
+- Binding priority: `device_id` > `room_id` > any active device
 
 ## Discovery loop behavior
 - mDNS scan timeout: 10 seconds
@@ -69,9 +78,30 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 
 ## Kiosk mode
 - Managed remotely via Settings panel (gear icon, upper-left)
-- Per connected browser client: kiosk on/off, orientation (landscape/portrait), bound device
+- Per connected browser client: kiosk on/off, orientation (landscape/portrait), bound display target
+- Binding options (in priority order):
+  1. Specific device (`device_id`) — always shows that device
+  2. Room (`room_id`) — shows the first playing/paused device in that room
+  3. None — shows any playing/paused device on the network
 - Portrait = CSS `transform: rotate(90deg)` on the inner canvas div with swapped `100vh/100vw`
 - True fullscreen: PWA manifest `display: fullscreen` + launch via `--app` flag
+- Clicking the artwork modal closes it when not in kiosk mode
+
+## Settings panel (AdminModal)
+- **Show unpaired devices** toggle — persisted to `localStorage`
+- **Scan** button — triggers immediate mDNS re-scan
+- **Devices section** — lists all devices with inline room text input (Enter or Set button saves)
+- **Connected Hosts section** — per browser client kiosk config (enable/disable, orientation, display binding)
+- **Developer section** — Debug panel toggle (persisted to `localStorage`)
+
+## Debug panel
+- Enabled via the Developer section in Settings
+- Fixed terminal-style panel at the bottom of the UI (200px, dark background, monospace font)
+- Logs two categories:
+  - `→` (green): commands sent to devices (`play_pause`, `set_position`, etc.) with device name
+  - `←` (cyan): WebSocket messages received (`status_update` summarized as count, `client_hello`, `kiosk_config`)
+- Auto-scrolls to latest entry; Clear button; max 300 entries retained
+- Implemented via `DebugContext` (provides `log()` to DeviceCard, RemoteModal) + ref-based callback to `useDevices` hook (outside the context boundary)
 
 ## Key env vars (`backend/.env`)
 ```
@@ -83,11 +113,22 @@ EXTRA_HOSTS=192.168.89.161        # comma-separated Apple TV IPs on other subnet
 KALEIDESCAPE_HOSTS=192.168.75.214 # comma-separated Kaleidescape player IPs
 ```
 
-## Logo
-`frontend/public/logo.png` — "What's Playing" branded logo with green geometric play icon on black background. Source of truth is the root `logo.png`; copy to `frontend/public/logo.png` then rebuild to deploy.
+## Logo / favicon
+- `frontend/public/logo.png` — "What's Playing" branded logo. Source of truth is the root `logo.png`; copy to `frontend/public/logo.png` then rebuild to deploy.
+- `frontend/public/favicon.svg` — geometric play icon (5-facet teal→yellow-green gradient on black rounded-rect), matching the logo mark.
 
 ## Frontend build / deploy
 ```bash
 cd frontend && npm run build   # outputs to frontend/dist/
 ```
 Backend serves `frontend/dist/` automatically — no config change needed after build.
+
+## Testing
+```bash
+# Backend (pytest)
+cd backend && source .venv/bin/activate && python -m pytest test_utils.py -v
+
+# Frontend (vitest)
+cd frontend && npm test -- --run
+```
+Tests cover: title cleaning, RT score parsing, RT URL matching, offline status room field, known-device room preservation, frontend utility functions (formatTime, appLabel, title parsers, generic title detection).

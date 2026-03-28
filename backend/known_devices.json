@@ -38,5 +38,29 @@
     "model": "Gen4K",
     "device_type": "appletv",
     "room": "Living Room"
+  },
+  "2E:56:C8:C6:51:18": {
+    "identifier": "2E:56:C8:C6:51:18",
+    "name": "Master Bedroom",
+    "address": "192.168.75.140",
+    "model": "Gen4K",
+    "device_type": "appletv",
+    "room": "Master Bedroom"
+  },
+  "A6:C4:7A:D2:D5:AC": {
+    "identifier": "A6:C4:7A:D2:D5:AC",
+    "name": "Entertainment Room",
+    "address": "192.168.75.152",
+    "model": "Gen4K",
+    "device_type": "appletv",
+    "room": "Entertainment Room"
+  },
+  "0E:A2:2B:45:0E:1C": {
+    "identifier": "0E:A2:2B:45:0E:1C",
+    "name": "Guest Room",
+    "address": "192.168.75.175",
+    "model": "Gen4K",
+    "device_type": "appletv",
+    "room": "Guest Room"
   }
 }

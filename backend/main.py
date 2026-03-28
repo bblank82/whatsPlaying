@@ -27,7 +27,6 @@ from pyatv.const import Protocol as _Protocol
 
 from atv_client import DeviceClient
 from credentials import get_for_device, save as save_credential, forget as forget_credentials
-from discovery import scan_devices, _conf_to_dict
 from kscape_client import KaleidescapeClient
 
 load_dotenv()

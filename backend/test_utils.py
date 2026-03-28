@@ -1,6 +1,7 @@
 """Tests for pure utility functions in main.py."""
 import pytest
-from main import _clean_title, _rt_score_from_page, _rt_direct_url
+from unittest.mock import patch
+from main import _clean_title, _rt_score_from_page, _rt_direct_url, _offline_status, _register_known_device
 
 
 # ---------------------------------------------------------------------------
@@ -138,3 +139,90 @@ class TestRtDirectUrl:
         )
         url = _rt_direct_url(html, "Inception", "movie")
         assert url == "https://www.rottentomatoes.com/m/inception"
+
+
+# ---------------------------------------------------------------------------
+# _offline_status
+# ---------------------------------------------------------------------------
+
+class TestOfflineStatus:
+    def _base(self, **overrides):
+        info = {
+            "identifier": "aa:bb:cc",
+            "name": "Living Room",
+            "address": "192.168.1.10",
+            "model": "Gen4K",
+            "device_type": "appletv",
+        }
+        info.update(overrides)
+        return info
+
+    def test_includes_room_when_set(self):
+        result = _offline_status(self._base(room="Theater"))
+        assert result["room"] == "Theater"
+
+    def test_room_is_none_when_absent(self):
+        result = _offline_status(self._base())
+        assert result["room"] is None
+
+    def test_room_is_none_when_explicitly_null(self):
+        result = _offline_status(self._base(room=None))
+        assert result["room"] is None
+
+    def test_connected_is_always_false(self):
+        assert _offline_status(self._base())["connected"] is False
+
+    def test_now_playing_is_always_none(self):
+        assert _offline_status(self._base())["now_playing"] is None
+
+    def test_defaults_device_type_to_appletv(self):
+        info = {"identifier": "x", "name": "TV", "address": "1.2.3.4", "model": "Gen4K"}
+        assert _offline_status(info)["device_type"] == "appletv"
+
+
+# ---------------------------------------------------------------------------
+# _register_known_device — room field preservation
+# ---------------------------------------------------------------------------
+
+class TestRegisterKnownDeviceRoom:
+    def _status(self, identifier="aa:bb", name="TV", **kwargs):
+        return {"identifier": identifier, "name": name, "address": "1.2.3.4",
+                "model": "Gen4K", "device_type": "appletv", **kwargs}
+
+    def test_room_preserved_when_device_already_has_one(self):
+        existing = {"aa:bb": {"identifier": "aa:bb", "name": "TV",
+                               "address": "1.2.3.4", "model": "Gen4K",
+                               "device_type": "appletv", "room": "Theater"}}
+        saved = {}
+        with patch("main._load_known_devices", return_value=existing), \
+             patch("main._save_known_devices", side_effect=lambda d: saved.update(d)):
+            _register_known_device(self._status())
+        assert saved["aa:bb"]["room"] == "Theater"
+
+    def test_room_is_none_for_new_device(self):
+        with patch("main._load_known_devices", return_value={}), \
+             patch("main._save_known_devices", side_effect=lambda d: None) as mock_save:
+            captured = {}
+            mock_save.side_effect = lambda d: captured.update(d)
+            _register_known_device(self._status())
+        assert captured["aa:bb"]["room"] is None
+
+    def test_room_not_overwritten_by_status_without_room_key(self):
+        existing = {"aa:bb": {"identifier": "aa:bb", "name": "TV",
+                               "address": "1.2.3.4", "model": "Gen4K",
+                               "device_type": "appletv", "room": "Office"}}
+        saved = {}
+        with patch("main._load_known_devices", return_value=existing), \
+             patch("main._save_known_devices", side_effect=lambda d: saved.update(d)):
+            # status dict has no "room" key — room must still be preserved from existing
+            _register_known_device({"identifier": "aa:bb", "name": "TV",
+                                    "address": "1.2.3.4", "model": "Gen4K",
+                                    "device_type": "appletv"})
+        assert saved["aa:bb"]["room"] == "Office"
+
+    def test_noop_when_identifier_missing(self):
+        # Should not raise and should not call save
+        with patch("main._load_known_devices", return_value={}) as mock_load, \
+             patch("main._save_known_devices") as mock_save:
+            _register_known_device({"name": "No ID"})
+        mock_save.assert_not_called()
