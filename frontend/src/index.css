@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #1c1c1e;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes eq1 { 0%,100% { height: 3px } 40%  { height: 13px } }
+@keyframes eq2 { 0%,100% { height: 9px } 60%  { height: 3px  } }
+@keyframes eq3 { 0%,100% { height: 5px } 20%  { height: 14px } }
+
+.eq1 { animation: eq1 1.1s ease-in-out infinite; }
+.eq2 { animation: eq2 1.1s ease-in-out infinite 0.15s; }
+.eq3 { animation: eq3 1.1s ease-in-out infinite 0.3s; }

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Bash(python -c \"import pyatv, fastapi, uvicorn, dotenv, websockets\")",
+      "Bash(python3 -c \"import pyatv, fastapi, uvicorn, dotenv, websockets\")",
+      "Bash(pip3 list:*)",
+      "Bash(bash setup.sh)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(python3 -c \":*)",
+      "Curl"
+    ]
+  }
+}
