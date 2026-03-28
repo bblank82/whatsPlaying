@@ -1,0 +1,37 @@
+{
+  "7E:8F:CF:5C:4D:71": {
+    "identifier": "7E:8F:CF:5C:4D:71",
+    "name": "Home Theater",
+    "address": "192.168.75.56",
+    "model": "Gen4K",
+    "device_type": "appletv"
+  },
+  "16:1F:BA:5D:C7:E1": {
+    "identifier": "16:1F:BA:5D:C7:E1",
+    "name": "Office",
+    "address": "192.168.75.189",
+    "model": "Gen4K",
+    "device_type": "appletv"
+  },
+  "7b2c391e-4ee8-449c-a861-0e4896ec09ce": {
+    "identifier": "7b2c391e-4ee8-449c-a861-0e4896ec09ce",
+    "name": "Astra",
+    "address": "192.168.89.161",
+    "model": "Unknown",
+    "device_type": "appletv"
+  },
+  "kaleidescape-192.168.75.214": {
+    "identifier": "kaleidescape-192.168.75.214",
+    "name": "Theater (Kaleidescape)",
+    "address": "192.168.75.214",
+    "model": "Kaleidescape",
+    "device_type": "kaleidescape"
+  },
+  "D6:EB:64:86:DA:D8": {
+    "identifier": "D6:EB:64:86:DA:D8",
+    "name": "Living Room",
+    "address": "192.168.75.198",
+    "model": "Gen4K",
+    "device_type": "appletv"
+  }
+}

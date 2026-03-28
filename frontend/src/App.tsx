@@ -138,6 +138,7 @@ export default function App() {
           deviceName={pairingDevice.name}
           isConnected={pairingDevice.isConnected}
           onClose={() => setPairingDevice(null)}
+          onForget={() => setPairingDevice(null)}
         />
       )}
 

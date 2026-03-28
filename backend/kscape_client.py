@@ -90,7 +90,9 @@ class KaleidescapeClient:
         self._year: Optional[int] = None
         self._model: str = "Kaleidescape"
         self._serial: Optional[str] = None
-        # Sequence counter for outgoing commands
+        self._cpdid: str = "01"       # assigned CPDID; updated from DEVICE_INFO response
+        self._power_on: bool = False  # updated by DEVICE_POWER_STATE push; default off until confirmed
+        # Sequence counter for outgoing commands (single digit 1-9 per spec)
         self._seq = 1
 
     # ------------------------------------------------------------------
@@ -139,10 +141,11 @@ class KaleidescapeClient:
 
             # Request device info and enable push events
             await self._send_raw("GET_DEVICE_INFO")
+            await self._send_raw("GET_DEVICE_POWER_STATE")
             await self._send_raw("GET_PLAY_STATUS")
             await self._send_raw("GET_HIGHLIGHTED_SELECTION")
-            # Enable all event notifications (bitmask of all 1s for relevant events)
-            await self._send_raw("ENABLE_EVENTS:01111111111111111")
+            # Subscribe to events from the directly-connected device (CPDID 01)
+            await self._send_raw("ENABLE_EVENTS:01")
 
             # Start background reader
             self._reader_task = asyncio.create_task(self._read_loop())
@@ -170,17 +173,24 @@ class KaleidescapeClient:
         self._reader = None
 
     async def _send_raw(self, command: str):
-        """Send a framed command to the player."""
+        """Send a framed command to the player.
+
+        Wire format: device_id/seq/command:params
+        device_id is always '01' (directly-connected component per spec).
+        seq is a single digit 1-9, cycling.
+        """
         if not self._writer:
+            logger.warning("Kaleidescape send skipped (no writer): %s", command)
             return
-        seq = f"{self._seq:02d}"
-        self._seq = (self._seq % 99) + 1
-        line = f"{seq}/1/{command}:\r\n"
+        seq = str(self._seq)
+        self._seq = (self._seq % 9) + 1
+        line = f"01/{seq}/{command}:\r\n"
+        logger.debug("Kaleidescape >> %s", line.strip())
         try:
             self._writer.write(line.encode())
             await self._writer.drain()
         except Exception as exc:
-            logger.debug("Kaleidescape send error: %s", exc)
+            logger.warning("Kaleidescape send error: %s", exc)
             await self._handle_disconnect()
 
     async def send_command(self, action: str, pos: Optional[int] = None):
@@ -204,7 +214,7 @@ class KaleidescapeClient:
             "home":          "TOP_MENU",
             # Power
             "turn_on":       "LEAVE_STANDBY",
-            "turn_off":      "STANDBY",
+            "turn_off":      "ENTER_STANDBY",
             # Volume (routed to zone controller if available)
             "volume_up":     "VOLUME_UP",
             "volume_down":   "VOLUME_DOWN",
@@ -246,6 +256,7 @@ class KaleidescapeClient:
             return
         self._connected = False
         self._play_state = "DeviceState.Idle"
+        self._power_on = False
         logger.info("Kaleidescape disconnected (%s) — reconnecting in %ds", self.address, RECONNECT_DELAY)
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
@@ -264,17 +275,18 @@ class KaleidescapeClient:
         """Parse one response/push line from the player."""
         if not line or line.startswith("#"):
             return  # comment / blank
+        logger.debug("Kaleidescape << %r", line)
 
-        # Format: /1/STATUS_NAME field1:field2:...:/
-        # or:     seq/1/STATUS_NAME field1:field2:...:/
-        # Strip leading sequence and /1/
-        m = re.match(r"^(?:\d+)?/\d+/(\w+)\s*(.*?)/?$", line)
+        # Wire format: seq/device/code:STATUS_NAME:field1:field2:...:/checksum
+        # device is '1' for responses, '!' for push events — both must be handled.
+        m = re.match(r"^[^/]*/[^/]+/\d+:(\w+)(?::(.*))?$", line)
         if not m:
+            logger.debug("Kaleidescape unmatched line: %r", line)
             return
 
         status_name = m.group(1)
-        payload = m.group(2).rstrip("/").strip()
-        fields = payload.split(":") if payload else []
+        raw = re.sub(r":/\d+$", "", m.group(2) or "")
+        fields = [f for f in raw.split(":") if f != ""]
 
         if status_name == "DEVICE_INFO":
             # Fields: friendly_name:model:type:hardware:software:...
@@ -297,6 +309,12 @@ class KaleidescapeClient:
         elif status_name == "CONTENT_DETAILS":
             self._parse_content_details(fields)
 
+        elif status_name == "DEVICE_POWER_STATE":
+            # Field 0: 0 = standby, 1 = on
+            if fields:
+                self._power_on = fields[0] != "0"
+                logger.info("Kaleidescape power state: %s (%s)", fields[0], "on" if self._power_on else "standby")
+
         elif status_name == "HIGHLIGHTED_SELECTION":
             # Same as MOVIE_LOCATION — use whichever arrives
             if fields:
@@ -307,55 +325,52 @@ class KaleidescapeClient:
                     await self._send_raw(f"GET_CONTENT_DETAILS:{handle}")
 
     def _parse_device_info(self, fields: list[str]):
-        # Typical layout (varies): friendly_name, serial, model, ...
-        # We try positions known from the protocol spec; fall back gracefully
+        # Wire layout per spec: device_type : serial_num : cpdid : ip_address
+        # field[0] = device_type (deprecated int)
+        # field[1] = serial number (16-hex zero-padded)
+        # field[2] = assigned CPDID ("00" if none assigned)
+        # field[3] = ip_address
         try:
-            if len(fields) >= 1 and fields[0]:
-                self.name = f"{fields[0]} (Kaleidescape)"
             if len(fields) >= 2 and fields[1]:
                 self._serial = fields[1]
-                self.identifier = f"kaleidescape-{self._serial}"
-            if len(fields) >= 3 and fields[2]:
-                self._model = f"Kaleidescape {fields[2]}"
+            if len(fields) >= 3 and fields[2] and fields[2] != "00":
+                old_cpdid = self._cpdid
+                self._cpdid = fields[2]
+                logger.info("Kaleidescape assigned CPDID: %s", self._cpdid)
+                if self._cpdid != old_cpdid:
+                    # Re-enable events with the correct assigned CPDID
+                    asyncio.create_task(self._send_raw(f"ENABLE_EVENTS:{self._cpdid}"))
         except Exception:
             pass
         logger.info("Kaleidescape device: %s (%s)", self.name, self.identifier)
 
     def _parse_play_status(self, fields: list[str]):
-        # Protocol spec layout for PLAY_STATUS:
-        # status_code : movie_location_handle : play_state : chapter :
-        # chapter_start : chapter_end : movie_position : movie_duration :
-        # play_speed : ui_state : ...
-        # Positions vary slightly across firmware versions.
-        # We look for the play state (0-4), position (HH:MM:SS), duration (HH:MM:SS).
+        # Wire layout: handle : play_state : chapter : chapter_pos_s :
+        #              chapter_dur_s : play_speed : title_pos_s : title_dur_s
+        # Times are 5-digit zero-padded seconds (e.g. "00000", "07200").
         try:
-            # Field 0: 4-digit status code (e.g. "0400")
-            # Field 1: movie_location handle
-            # Field 2: play_state
-            # Fields further in contain time values in HH:MM:SS format
-            if len(fields) > 1 and fields[1]:
-                handle = fields[1]
-                if handle and handle != self._movie_location:
+            # Field 0: movie handle ('0' or empty = nothing loaded)
+            if len(fields) > 0 and fields[0] and fields[0] != "0":
+                handle = fields[0]
+                if handle != self._movie_location:
                     self._movie_location = handle
                     self._cover_url = f"http://{self.address}:{KSCAPE_PORT}/img/{handle}"
 
-            if len(fields) > 2:
-                self._play_state = _PLAY_STATE.get(fields[2], "DeviceState.Idle")
+            # Field 1: play state
+            if len(fields) > 1:
+                self._play_state = _PLAY_STATE.get(fields[1], "DeviceState.Idle")
 
-            # Find HH:MM:SS values — position comes before duration in the field list
-            time_values = []
-            for f in fields[3:]:
-                if re.match(r"^\d{1,2}:\d{2}:\d{2}$", f):
-                    time_values.append(_hms_to_seconds(f))
-
-            # First time value = chapter position, skip to movie position/duration
-            # Layout is: chapter_start, chapter_end, movie_position, movie_duration
-            # We want the last two time values
-            if len(time_values) >= 2:
-                self._position = time_values[-2]
-                self._duration = time_values[-1]
-            elif len(time_values) == 1:
-                self._position = time_values[0]
+            # Fields 6 & 7: title position and duration in seconds
+            if len(fields) > 6:
+                try:
+                    self._position = int(fields[6])
+                except ValueError:
+                    pass
+            if len(fields) > 7:
+                try:
+                    self._duration = int(fields[7])
+                except ValueError:
+                    pass
 
         except Exception as exc:
             logger.debug("Kaleidescape play_status parse error: %s — fields: %s", exc, fields)
@@ -419,6 +434,6 @@ class KaleidescapeClient:
             "model": self._model,
             "device_type": "kaleidescape",
             "connected": self._connected,
-            "power": "PowerState.On" if self._connected else "PowerState.Off",
+            "power": "PowerState.On" if (self._connected and self._power_on) else "PowerState.Off",
             "now_playing": now_playing,
         }

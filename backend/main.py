@@ -81,6 +81,66 @@ async def _probe_extra_host(ip: str) -> Optional[ATVConf]:
         return None
 
 # ---------------------------------------------------------------------------
+# Known-device persistence
+# ---------------------------------------------------------------------------
+
+_KNOWN_DEVICES_FILE = os.path.join(os.path.dirname(__file__), "known_devices.json")
+
+
+def _load_known_devices() -> dict:
+    try:
+        with open(_KNOWN_DEVICES_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_known_devices(known: dict) -> None:
+    try:
+        with open(_KNOWN_DEVICES_FILE, "w") as f:
+            json.dump(known, f, indent=2)
+    except Exception as exc:
+        logger.warning("Could not save known_devices.json: %s", exc)
+
+
+def _register_known_device(status: dict) -> None:
+    """Persist basic device info so it survives restarts."""
+    ident = status.get("identifier")
+    if not ident:
+        return
+    known = _load_known_devices()
+    known[ident] = {
+        "identifier": ident,
+        "name": status.get("name", ""),
+        "address": status.get("address", ""),
+        "model": status.get("model", ""),
+        "device_type": status.get("device_type", "appletv"),
+    }
+    _save_known_devices(known)
+
+
+def _forget_known_device(identifier: str) -> None:
+    known = _load_known_devices()
+    known.pop(identifier, None)
+    _save_known_devices(known)
+
+
+def _offline_status(info: dict) -> dict:
+    """Build a disconnected status snapshot from stored device info."""
+    return {
+        "identifier": info["identifier"],
+        "name": info["name"],
+        "address": info.get("address", ""),
+        "hostname": "",
+        "model": info.get("model", ""),
+        "device_type": info.get("device_type", "appletv"),
+        "connected": False,
+        "power": None,
+        "now_playing": None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Shared state
 # ---------------------------------------------------------------------------
 
@@ -119,6 +179,8 @@ async def _connect_conf(conf) -> None:
         client = DeviceClient(conf)
         clients[ident] = client
         await client.connect()
+        # Persist so the device survives restarts even when offline
+        _register_known_device(await client.get_status())
 
 
 async def discovery_loop():
@@ -126,7 +188,7 @@ async def discovery_loop():
     loop = asyncio.get_running_loop()
     while True:
         try:
-            found = [c for c in await pyatv.scan(loop, timeout=5) if _is_appletv(c)]
+            found = [c for c in await pyatv.scan(loop, timeout=10) if _is_appletv(c)]
 
             # Add extra hosts (cross-subnet devices mDNS can't reach)
             for ip in EXTRA_HOSTS:
@@ -151,10 +213,11 @@ async def discovery_loop():
                 if isinstance(clients[ident], KaleidescapeClient):
                     continue  # managed separately — never removed by ATV discovery
                 if ident not in found_ids and ident not in extra_ids:
-                    logger.info("Device gone: %s", ident)
-                    await clients[ident].disconnect()
-                    del clients[ident]
-                    latest_statuses.pop(ident, None)
+                    # Disconnect but keep in clients — mDNS is flaky and a device
+                    # that misses one scan window should not be permanently removed.
+                    if clients[ident]._connected:
+                        logger.info("Device not found in scan, disconnecting: %s", ident)
+                        await clients[ident].disconnect()
 
         except Exception as exc:
             logger.error("Discovery loop error: %s", exc)
@@ -193,6 +256,10 @@ async def polling_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Pre-populate device list from persisted known devices (shows as offline until found)
+    for info in _load_known_devices().values():
+        latest_statuses[info["identifier"]] = _offline_status(info)
+
     # Perform an immediate scan on startup
     loop = asyncio.get_running_loop()
     found = [c for c in await pyatv.scan(loop, timeout=5) if _is_appletv(c)]
@@ -661,6 +728,18 @@ async def delete_credentials(identifier: str):
     if client:
         await client.disconnect()
         await client.connect()  # reconnects without credentials
+    return {"success": True}
+
+
+@app.delete("/api/devices/{identifier}")
+async def forget_device(identifier: str):
+    """Remove a device entirely — credentials, known list, and active client."""
+    forget_credentials(identifier)
+    _forget_known_device(identifier)
+    client = clients.pop(identifier, None)
+    if client:
+        await client.disconnect()
+    latest_statuses.pop(identifier, None)
     return {"success": True}
 
 

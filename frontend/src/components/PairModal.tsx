@@ -19,6 +19,7 @@ interface Props {
   deviceName: string;
   isConnected?: boolean;
   onClose: () => void;
+  onForget?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ const btn: React.CSSProperties = {
 // PairModal
 // ---------------------------------------------------------------------------
 
-export function PairModal({ deviceId, deviceName, isConnected, onClose }: Props) {
+export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget }: Props) {
   const [step, setStep]       = useState<Step>(isConnected ? 'confirm_forget' : 'starting');
   const [pairingId, setPairingId]   = useState('');
   const [protocol, setProtocol]     = useState('');
@@ -85,6 +86,14 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose }: Props)
       await fetch(`/api/devices/${deviceId}/credentials`, { method: 'DELETE' });
     } catch { /* ignore */ }
     startPairing();
+  }
+
+  async function forgetDevice() {
+    try {
+      await fetch(`/api/devices/${deviceId}`, { method: 'DELETE' });
+    } catch { /* ignore */ }
+    onForget?.();
+    onClose();
   }
 
   async function startPairing() {
@@ -206,6 +215,14 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose }: Props)
                     Forget &amp; Re-pair
                   </button>
                 </div>
+                {onForget && (
+                  <button
+                    onClick={forgetDevice}
+                    style={{ ...btn, flex: 'none', width: '100%', marginTop: 4, background: 'none', color: 'rgba(255,255,255,0.3)', fontSize: 13 }}
+                  >
+                    Forget Device
+                  </button>
+                )}
               </div>
             )}
 
