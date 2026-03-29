@@ -22,12 +22,12 @@ brew install python node
 
 Either clone from git or copy the folder via AirDrop/network share. Place it somewhere permanent:
 ```bash
-cp -r appletv-monitor ~/appletv-monitor
+cp -r whats-playing ~/whats-playing
 ```
 
 **2. Run setup**
 ```bash
-cd ~/appletv-monitor
+cd ~/whats-playing
 ./setup.sh
 ```
 
@@ -53,7 +53,7 @@ backend/known_devices.json
 
 **5. Test manually**
 ```bash
-cd ~/appletv-monitor && ./start.sh
+cd ~/whats-playing && ./start.sh
 ```
 Open `http://localhost:8000` — all devices should appear.
 
@@ -75,18 +75,18 @@ cat > ~/Library/LaunchAgents/com.whatsplaying.plist << 'EOF'
     <string>com.whatsplaying</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/bblank/appletv-monitor/start.sh</string>
+        <string>/Users/bblank/whats-playing/start.sh</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/bblank/appletv-monitor</string>
+    <string>/Users/bblank/whats-playing</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/bblank/appletv-monitor/server.log</string>
+    <string>/Users/bblank/whats-playing/server.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/bblank/appletv-monitor/server.log</string>
+    <string>/Users/bblank/whats-playing/server.log</string>
 </dict>
 </plist>
 EOF
@@ -107,7 +107,7 @@ launchctl unload ~/Library/LaunchAgents/com.whatsplaying.plist  # disable autost
 
 View logs:
 ```bash
-tail -f ~/appletv-monitor/server.log
+tail -f ~/whats-playing/server.log
 ```
 
 ---

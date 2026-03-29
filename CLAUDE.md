@@ -22,8 +22,8 @@ cd backend && source .venv/bin/activate && python main.py
 ## Devices supported
 
 ### Apple TV
-- Discovery via `pyatv` (mDNS + manual hosts via `EXTRA_HOSTS` env var)
-- Client: `backend/atv_client.py` (`DeviceClient`)
+- Discovery via `pyatv` (mDNS + manual hosts via `EXTRA_HOSTS` in `whatsplaying_config.json`)
+- Client: `backend/atv_client.py` (`DeviceClient`) — has `cred_id` attribute (credential lookup key) which may differ from `identifier` when device was first probed via `/info`; credentials always looked up via `cred_id`
 - Credentials stored in `backend/credentials.json`
 - Known devices persisted in `backend/known_devices.json` — loaded on startup so offline devices still appear in the UI
 - Push state staleness: if `metadata.app` (live) differs from the cached push state's `app_id`, cache is discarded and a fresh poll runs. Cache older than 60 s is also discarded. `playstatus_error` clears the cache immediately.
@@ -36,7 +36,7 @@ cd backend && source .venv/bin/activate && python main.py
 ### Kaleidescape
 - TCP Control Protocol on port 10000
 - Client: `backend/kscape_client.py` (`KaleidescapeClient`)
-- Configured via `KALEIDESCAPE_HOSTS` env var (comma-separated IPs) in `backend/.env`
+- Configured via `KALEIDESCAPE_HOSTS` list in `backend/whatsplaying_config.json` (migrated from `.env` on first run)
 - Friendly name scraped from `http://my-kaleidescape.local./components` on connect; mDNS resolved via `socket.getaddrinfo` (asyncio DNS doesn't support mDNS) before passing to httpx
 - Device name format: `"{friendly_name} (Kaleidescape)"` e.g. `"Theater (Kaleidescape)"`
 - Identifier is always IP-based (`kaleidescape-{ip}`) — do NOT change `self.identifier` after init or control calls will break (clients dict key mismatch)
@@ -72,7 +72,7 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - `backend/known_devices.json` — persists `{identifier, name, address, model, device_type, room}` for all seen devices
 - Loaded at startup: pre-populates `latest_statuses` and `device_rooms` with offline entries so devices appear immediately
 - Written whenever a new device connects (`_connect_conf`) — preserves existing `room` field
-- Forget device: `DELETE /api/devices/{id}` removes from known list, credentials, clients, statuses, `device_rooms`, and strips IP from `EXTRA_HOSTS`/`KALEIDESCAPE_HOSTS` in `.env`
+- Forget device: `DELETE /api/devices/{id}` removes from known list, credentials, clients, statuses, `device_rooms`, and strips IP from `EXTRA_HOSTS`/`KALEIDESCAPE_HOSTS` in `whatsplaying_config.json`
 - **Device identifier keys are always MAC addresses** (e.g. `7E:8F:CF:5C:4D:71`) for Apple TVs, `kaleidescape-{ip}` for Kaleidescape — UUID keys in `known_devices.json` indicate a stale/buggy entry from an old `_probe_extra_host` bug and should be removed
 
 ## Room concept
@@ -86,13 +86,14 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - mDNS scan timeout: 10 seconds
 - Devices that miss a scan are **disconnected but kept** in `clients` — not deleted (mDNS is flaky)
 - Kaleidescape clients are never touched by the Apple TV discovery loop
-- `IGNORED_DEVICES` (comma-separated identifiers in `.env`) — devices in this list are skipped by `_connect_conf` and the Kaleidescape startup loop; they remain in `known_devices.json` so they can be un-hidden from Settings
+- `IGNORED_DEVICES` (list in `whatsplaying_config.json`) — devices in this list are skipped by `_connect_conf` and the Kaleidescape startup loop; they remain in `known_devices.json` so they can be un-hidden from Settings
+- Hide/unhide: `POST /api/devices/{id}/ignore` / `DELETE /api/devices/{id}/ignore`
 
 ## Device pinning
 - **Pin** = add device's IP to `EXTRA_HOSTS` — device reconnects by direct TCP probe even without mDNS (useful when moving networks)
 - **Unpin** = remove from `EXTRA_HOSTS` — device still appears if mDNS discovers it
 - Pin state is injected as `pinned: bool` into every device status in the polling loop
-- `POST /api/devices/{id}/pin` and `DELETE /api/devices/{id}/pin` — update `EXTRA_HOSTS` and `.env` immediately
+- `POST /api/devices/{id}/pin` and `DELETE /api/devices/{id}/pin` — update `EXTRA_HOSTS` in `whatsplaying_config.json` immediately
 - Pin icon (location pin) on DeviceCard header — filled/blue when pinned; only shown for Apple TVs (Kaleidescape is always manual)
 
 ## Kiosk mode
@@ -111,7 +112,7 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - **Scan** button — triggers immediate mDNS re-scan
 - **Devices section** — "Add device by IP" form (type: Apple TV or Kaleidescape); lists all devices with room input and hide/remove buttons
   - Auto-discovered devices → hide button (eye-slash) → adds to `IGNORED_DEVICES`
-  - Manually configured devices (in EXTRA_HOSTS/KALEIDESCAPE_HOSTS) → trash button → full forget + removes from `.env`
+  - Manually configured devices (in EXTRA_HOSTS/KALEIDESCAPE_HOSTS) → trash button → full forget + removes from `whatsplaying_config.json`
 - **Hidden section** — appears when `IGNORED_DEVICES` is non-empty; shows hidden devices with Unhide button
 - **Connected Hosts section** — per browser client kiosk config (enable/disable, orientation, display binding)
 - **Developer section** — Debug panel toggle; Restart server button (two-step confirm → `POST /api/admin/restart` → SIGTERM → launchctl restarts)
@@ -139,19 +140,18 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 
 ## Key env vars (`backend/.env`)
 ```
-SCAN_INTERVAL=30          # seconds between mDNS scans
-POLL_INTERVAL=5           # seconds between status polls
+SCAN_INTERVAL=30   # seconds between mDNS scans
+POLL_INTERVAL=5    # seconds between status polls
 TMDB_API_KEY=...
 OMDB_API_KEY=...
-EXTRA_HOSTS=192.168.89.161        # comma-separated Apple TV IPs on other subnets
-KALEIDESCAPE_HOSTS=192.168.75.214 # comma-separated Kaleidescape player IPs
-IGNORED_DEVICES=                  # comma-separated device identifiers to hide from UI
 ```
+`EXTRA_HOSTS`, `KALEIDESCAPE_HOSTS`, and `IGNORED_DEVICES` are **not** stored in `.env` at runtime — they live in `backend/whatsplaying_config.json` and are migrated from `.env` on first run.
 
-## .env management
-- `_update_env_var(key, value)` in `main.py` — safely rewrites a single `KEY=value` line in `.env` without touching other settings
-- **Important**: always ensures the last line ends with `\n` before appending a new key, to prevent concatenation bugs
-- Modified at runtime by: pin/unpin, add/remove host, hide/unhide device, server restart writes nothing (reads only)
+## Runtime config (`backend/whatsplaying_config.json`)
+- Stores `extra_hosts`, `kaleidescape_hosts`, `ignored_devices` as JSON arrays
+- Written by `_save_runtime_config()` whenever pin/unpin, add/remove host, or hide/unhide runs
+- Migrated from `.env` on first run by `_migrate_from_env()` — values read from `.env` and written to the JSON file
+- `GET /api/config/hosts` — returns current lists; `POST /api/config/hosts` — adds a device by IP (`host_type`: `"appletv"` or `"kaleidescape"`)
 
 ## Logo / favicon
 - `frontend/public/logo.png` — "What's Playing" branded logo. Source of truth is the root `logo.png`; copy to `frontend/public/logo.png` then rebuild to deploy.

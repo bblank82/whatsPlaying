@@ -72,7 +72,7 @@ cd frontend && npm run build
 ## Project Structure
 
 ```
-appletv-monitor/
+whats-playing/
 ├── backend/
 │   ├── main.py            # FastAPI server, REST + WebSocket
 │   ├── atv_client.py      # Apple TV device client (pyatv)
