@@ -3,7 +3,7 @@
     "identifier": "7E:8F:CF:5C:4D:71",
     "name": "Home Theater",
     "address": "192.168.75.56",
-    "model": "Gen4K",
+    "model": "Unknown",
     "device_type": "appletv",
     "room": "Theater"
   },
@@ -11,17 +11,9 @@
     "identifier": "16:1F:BA:5D:C7:E1",
     "name": "Office",
     "address": "192.168.75.189",
-    "model": "Gen4K",
-    "device_type": "appletv",
-    "room": "Office"
-  },
-  "7b2c391e-4ee8-449c-a861-0e4896ec09ce": {
-    "identifier": "7b2c391e-4ee8-449c-a861-0e4896ec09ce",
-    "name": "Astra",
-    "address": "192.168.89.161",
     "model": "Unknown",
     "device_type": "appletv",
-    "room": "Astra"
+    "room": "Office"
   },
   "kaleidescape-192.168.75.214": {
     "identifier": "kaleidescape-192.168.75.214",
@@ -35,7 +27,7 @@
     "identifier": "D6:EB:64:86:DA:D8",
     "name": "Living Room",
     "address": "192.168.75.198",
-    "model": "Gen4K",
+    "model": "Unknown",
     "device_type": "appletv",
     "room": "Living Room"
   },
@@ -43,7 +35,7 @@
     "identifier": "2E:56:C8:C6:51:18",
     "name": "Master Bedroom",
     "address": "192.168.75.140",
-    "model": "Gen4K",
+    "model": "Unknown",
     "device_type": "appletv",
     "room": "Master Bedroom"
   },
@@ -51,7 +43,7 @@
     "identifier": "A6:C4:7A:D2:D5:AC",
     "name": "Entertainment Room",
     "address": "192.168.75.152",
-    "model": "Gen4K",
+    "model": "Unknown",
     "device_type": "appletv",
     "room": "Entertainment Room"
   },
@@ -59,8 +51,64 @@
     "identifier": "0E:A2:2B:45:0E:1C",
     "name": "Guest Room",
     "address": "192.168.75.175",
-    "model": "Gen4K",
+    "model": "Unknown",
     "device_type": "appletv",
     "room": "Guest Room"
+  },
+  "72:C2:D9:28:46:82": {
+    "identifier": "72:C2:D9:28:46:82",
+    "name": "Astra",
+    "address": "192.168.89.161",
+    "model": "AppleTV4KGen3",
+    "device_type": "appletv",
+    "room": null
+  },
+  "8d698b18-bd85-46c3-a45d-3e9a1b174639": {
+    "identifier": "8d698b18-bd85-46c3-a45d-3e9a1b174639",
+    "name": "Home Theater",
+    "address": "192.168.75.56",
+    "model": "Unknown",
+    "device_type": "appletv",
+    "room": null
+  },
+  "a41da7b6-0422-4238-a8d2-4ba0a044c648": {
+    "identifier": "a41da7b6-0422-4238-a8d2-4ba0a044c648",
+    "name": "Office",
+    "address": "192.168.75.189",
+    "model": "Unknown",
+    "device_type": "appletv",
+    "room": null
+  },
+  "b70dba37-8a55-4283-8dde-d4d354197201": {
+    "identifier": "b70dba37-8a55-4283-8dde-d4d354197201",
+    "name": "Living Room",
+    "address": "192.168.75.198",
+    "model": "Unknown",
+    "device_type": "appletv",
+    "room": null
+  },
+  "47a6edd2-d785-46be-93cf-fb2a6f083a8c": {
+    "identifier": "47a6edd2-d785-46be-93cf-fb2a6f083a8c",
+    "name": "Master Bedroom",
+    "address": "192.168.75.140",
+    "model": "Unknown",
+    "device_type": "appletv",
+    "room": null
+  },
+  "04f4a641-0037-4136-8efa-e028a4a68f82": {
+    "identifier": "04f4a641-0037-4136-8efa-e028a4a68f82",
+    "name": "Entertainment Room",
+    "address": "192.168.75.152",
+    "model": "Unknown",
+    "device_type": "appletv",
+    "room": null
+  },
+  "818d8507-70b8-4ff1-876e-dcf4624a823c": {
+    "identifier": "818d8507-70b8-4ff1-876e-dcf4624a823c",
+    "name": "Guest Room",
+    "address": "192.168.75.175",
+    "model": "Unknown",
+    "device_type": "appletv",
+    "room": null
   }
 }

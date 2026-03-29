@@ -170,6 +170,17 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
   const isKaleidescape = device_type === 'kaleidescape';
   const isOn = power?.toLowerCase().includes('on');
 
+  // Pin state — optimistic, synced from device.pinned
+  const [pinned, setPinned] = useState(device.pinned ?? false);
+  useEffect(() => { setPinned(device.pinned ?? false); }, [device.pinned]);
+  async function togglePin() {
+    const next = !pinned;
+    setPinned(next);
+    await fetch(`/api/devices/${encodeURIComponent(identifier)}/pin`, {
+      method: next ? 'POST' : 'DELETE',
+    });
+  }
+
   // Optimistic playback state
   const [optimistic, setOptimistic] = useState<{ deviceState?: string; positionDelta?: number } | null>(null);
   useEffect(() => { setOptimistic(null); }, [now_playing?.device_state, now_playing?.position]);
@@ -362,7 +373,28 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
           padding: '11px 16px 9px',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
+          gap: 8,
         }}>
+          {/* Power toggle — left of name, only when connected */}
+          {connected && (
+            <button
+              onClick={() => control(isOn ? 'turn_off' : 'turn_on')}
+              title={isOn ? 'Standby' : 'Wake'}
+              style={{
+                display: 'flex', alignItems: 'center', flexShrink: 0,
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                color: isOn ? '#30D158' : 'rgba(255,255,255,0.2)',
+                filter: isOn ? 'drop-shadow(0 0 4px rgba(48,209,88,0.55))' : 'none',
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <path d="M12 3v6"/>
+                <path d="M6.5 5A9 9 0 1 0 17.5 5"/>
+              </svg>
+            </button>
+          )}
+
+          {/* Device name + hostname */}
           <div style={{ minWidth: 0, flex: 1 }}>
             <p style={{
               fontSize: 14, fontWeight: 600,
@@ -373,43 +405,53 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
             <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.28)', marginTop: 1 }}>{hostname}</p>
           </div>
 
-          {connected && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, marginLeft: 10 }}>
-              {/* Power toggle */}
+          {/* Right controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
+            {/* Pin button — Apple TVs only, always visible */}
+            {!isKaleidescape && (
               <button
-                onClick={() => control(isOn ? 'turn_off' : 'turn_on')}
-                title={isOn ? 'Standby' : 'Wake'}
+                onClick={togglePin}
+                title={pinned ? 'Unpin (remove from EXTRA_HOSTS)' : 'Pin (add to EXTRA_HOSTS for cross-network reconnect)'}
                 style={{
-                  display: 'flex', alignItems: 'center',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                  color: isOn ? '#30D158' : 'rgba(255,255,255,0.2)',
-                  filter: isOn ? 'drop-shadow(0 0 4px rgba(48,209,88,0.55))' : 'none',
+                  color: pinned ? '#0A84FF' : 'rgba(255,255,255,0.2)',
+                  filter: pinned ? 'drop-shadow(0 0 4px rgba(10,132,255,0.5))' : 'none',
+                  transition: 'color 0.2s, filter 0.2s',
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                  <path d="M12 3v6"/>
-                  <path d="M6.5 5A9 9 0 1 0 17.5 5"/>
+                <svg width="11" height="14" viewBox="0 0 22 28" fill="none">
+                  <path
+                    d="M11 1C7.13 1 4 4.13 4 8c0 5.5 7 19 7 19s7-13.5 7-19c0-3.87-3.13-7-7-7z"
+                    fill={pinned ? '#0A84FF' : 'none'}
+                    stroke={pinned ? '#0A84FF' : 'rgba(255,255,255,0.3)'}
+                    strokeWidth="2" strokeLinejoin="round"
+                  />
+                  <circle cx="11" cy="8" r="2.8"
+                    fill={pinned ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.25)'}
+                  />
                 </svg>
               </button>
-              {!isKaleidescape && (
-                <button
-                  onClick={() => onPair(identifier)}
-                  title="Pair additional protocols"
-                  style={{
-                    width: 22, height: 22, borderRadius: 6,
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" strokeLinecap="round">
-                    <path d="M12 5v14M5 12h14"/>
-                  </svg>
-                </button>
-              )}
-            </div>
-          )}
+            )}
+            {/* Pair button — Apple TVs only, only when connected */}
+            {connected && !isKaleidescape && (
+              <button
+                onClick={() => onPair(identifier)}
+                title="Pair additional protocols"
+                style={{
+                  width: 22, height: 22, borderRadius: 6,
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer',
+                }}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* ── Card body ── */}

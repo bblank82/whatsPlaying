@@ -44,6 +44,69 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
   );
 }
 
+function RestartButton() {
+  const [state, setState] = useState<'idle' | 'confirm' | 'restarting'>('idle');
+
+  async function doRestart() {
+    setState('restarting');
+    try {
+      await fetch('/api/admin/restart', { method: 'POST' });
+    } catch { /* expected — server goes down */ }
+  }
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.04)',
+      border: '1px solid rgba(255,255,255,0.07)',
+      borderRadius: 10, padding: '10px 14px',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    }}>
+      <div>
+        <p style={{ fontSize: 13, fontWeight: 500, color: '#fff' }}>Restart server</p>
+        <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>
+          {state === 'restarting' ? 'Restarting — reconnecting…' : 'Process exits; launchctl brings it back'}
+        </p>
+      </div>
+      {state === 'idle' && (
+        <button
+          onClick={() => setState('confirm')}
+          style={{
+            fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 7, cursor: 'pointer',
+            background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)',
+            color: 'rgba(255,255,255,0.6)',
+          }}
+        >Restart</button>
+      )}
+      {state === 'confirm' && (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            onClick={() => setState('idle')}
+            style={{
+              fontSize: 11, padding: '5px 10px', borderRadius: 7, cursor: 'pointer',
+              background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.1)',
+              color: 'rgba(255,255,255,0.5)',
+            }}
+          >Cancel</button>
+          <button
+            onClick={doRestart}
+            style={{
+              fontSize: 11, fontWeight: 600, padding: '5px 12px', borderRadius: 7, cursor: 'pointer',
+              background: 'rgba(255,159,10,0.2)', border: '1px solid rgba(255,159,10,0.4)',
+              color: '#FF9F0A',
+            }}
+          >Confirm</button>
+        </div>
+      )}
+      {state === 'restarting' && (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }}>
+          <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+        </svg>
+      )}
+    </div>
+  );
+}
+
 export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTriggerScan, debugMode, onDebugModeChange, onClose }: Props) {
   const [hosts, setHosts] = useState<HostEntry[]>([]);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
@@ -51,6 +114,17 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
   // Local room edits: identifier -> draft room string
   const [roomDrafts, setRoomDrafts] = useState<Record<string, string>>({});
   const [savingRoom, setSavingRoom] = useState<Record<string, boolean>>({});
+  // Configured host lists (from .env via backend)
+  const [configHosts, setConfigHosts] = useState<{ extra_hosts: string[]; kaleidescape_hosts: string[]; ignored_devices: { identifier: string; name: string }[] }>({ extra_hosts: [], kaleidescape_hosts: [], ignored_devices: [] });
+  // Add device form
+  const [newHostIp, setNewHostIp] = useState('');
+  const [newHostType, setNewHostType] = useState<'appletv' | 'kaleidescape'>('appletv');
+  const [addingHost, setAddingHost] = useState(false);
+  const [addHostError, setAddHostError] = useState<string | null>(null);
+  // Per-device action states
+  const [removingDevice, setRemovingDevice] = useState<Record<string, boolean>>({});
+  const [ignoringDevice, setIgnoringDevice] = useState<Record<string, boolean>>({});
+  const [unignoringDevice, setUnignoringDevice] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetch('/api/admin/hosts').then(r => r.json()).then(setHosts).catch(() => {});
@@ -59,6 +133,12 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
     }, 5000);
     return () => clearInterval(id);
   }, []);
+
+  function refreshConfigHosts() {
+    fetch('/api/config/hosts').then(r => r.json()).then(setConfigHosts).catch(() => {});
+  }
+
+  useEffect(() => { refreshConfigHosts(); }, []);
 
   // Initialise room drafts from device list
   useEffect(() => {
@@ -87,6 +167,61 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
       });
     } finally {
       setSaving(s => ({ ...s, [clientId]: false }));
+    }
+  }
+
+  async function addHost() {
+    const ip = newHostIp.trim();
+    if (!ip) return;
+    setAddingHost(true);
+    setAddHostError(null);
+    try {
+      const r = await fetch('/api/config/hosts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip, host_type: newHostType }),
+      });
+      const data = await r.json();
+      if (data.error) {
+        setAddHostError(data.error);
+      } else {
+        setNewHostIp('');
+        refreshConfigHosts();
+      }
+    } catch {
+      setAddHostError('Request failed');
+    } finally {
+      setAddingHost(false);
+    }
+  }
+
+  async function removeDevice(identifier: string) {
+    setRemovingDevice(s => ({ ...s, [identifier]: true }));
+    try {
+      await fetch(`/api/devices/${encodeURIComponent(identifier)}`, { method: 'DELETE' });
+      refreshConfigHosts();
+    } finally {
+      setRemovingDevice(s => ({ ...s, [identifier]: false }));
+    }
+  }
+
+  async function ignoreDevice(identifier: string) {
+    setIgnoringDevice(s => ({ ...s, [identifier]: true }));
+    try {
+      await fetch(`/api/devices/${encodeURIComponent(identifier)}/ignore`, { method: 'POST' });
+      refreshConfigHosts();
+    } finally {
+      setIgnoringDevice(s => ({ ...s, [identifier]: false }));
+    }
+  }
+
+  async function unignoreDevice(identifier: string) {
+    setUnignoringDevice(s => ({ ...s, [identifier]: true }));
+    try {
+      await fetch(`/api/devices/${encodeURIComponent(identifier)}/ignore`, { method: 'DELETE' });
+      refreshConfigHosts();
+    } finally {
+      setUnignoringDevice(s => ({ ...s, [identifier]: false }));
     }
   }
 
@@ -187,10 +322,67 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
 
           {/* ── Devices / rooms ── */}
           <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '2px 2px 4px' }}>Devices</p>
+
+          {/* Add device by IP */}
+          <div style={{
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: 10, padding: '10px 12px',
+            display: 'flex', flexDirection: 'column', gap: 8,
+          }}>
+            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', margin: 0 }}>Add device by IP</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="text"
+                placeholder="192.168.1.100"
+                value={newHostIp}
+                onChange={e => { setNewHostIp(e.target.value); setAddHostError(null); }}
+                onKeyDown={e => { if (e.key === 'Enter') addHost(); }}
+                style={{
+                  flex: 1, fontSize: 12, padding: '5px 9px', borderRadius: 7,
+                  background: 'rgba(255,255,255,0.07)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  color: '#fff', outline: 'none', fontFamily: 'monospace',
+                }}
+              />
+              {/* Type toggle */}
+              {(['appletv', 'kaleidescape'] as const).map(t => (
+                <button key={t} onClick={() => setNewHostType(t)} style={{
+                  fontSize: 11, padding: '5px 9px', borderRadius: 7, cursor: 'pointer', flexShrink: 0,
+                  background: newHostType === t ? 'rgba(10,132,255,0.25)' : 'rgba(255,255,255,0.07)',
+                  border: `1px solid ${newHostType === t ? 'rgba(10,132,255,0.5)' : 'rgba(255,255,255,0.1)'}`,
+                  color: newHostType === t ? '#0A84FF' : 'rgba(255,255,255,0.45)',
+                  transition: 'all 0.15s',
+                }}>
+                  {t === 'appletv' ? 'Apple TV' : 'Kaleidescape'}
+                </button>
+              ))}
+              <button
+                onClick={addHost}
+                disabled={addingHost || !newHostIp.trim()}
+                style={{
+                  fontSize: 11, padding: '5px 12px', borderRadius: 7, cursor: 'pointer', flexShrink: 0,
+                  background: 'rgba(48,209,88,0.18)',
+                  border: '1px solid rgba(48,209,88,0.35)',
+                  color: '#30D158',
+                  opacity: addingHost || !newHostIp.trim() ? 0.5 : 1,
+                }}
+              >
+                {addingHost ? '…' : 'Add'}
+              </button>
+            </div>
+            {addHostError && (
+              <p style={{ fontSize: 11, color: '#FF453A', margin: 0 }}>{addHostError}</p>
+            )}
+          </div>
+
           {devices.length === 0 && (
             <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: 14, textAlign: 'center', padding: '12px 0' }}>No devices</p>
           )}
-          {[...devices].sort((a, b) => a.name.localeCompare(b.name)).map(device => (
+          {[...devices].sort((a, b) => a.name.localeCompare(b.name)).map(device => {
+            const isConfigured = configHosts.extra_hosts.includes(device.address) || configHosts.kaleidescape_hosts.includes(device.address);
+            const isBusy = removingDevice[device.identifier] || ignoringDevice[device.identifier];
+            return (
             <div key={device.identifier} style={{
               background: 'rgba(255,255,255,0.04)',
               border: '1px solid rgba(255,255,255,0.07)',
@@ -198,17 +390,27 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
               display: 'flex', alignItems: 'center', gap: 10,
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{device.name}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{device.name}</p>
+                  {isConfigured && (
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+                      color: 'rgba(10,132,255,0.8)', background: 'rgba(10,132,255,0.12)',
+                      border: '1px solid rgba(10,132,255,0.25)', borderRadius: 4, padding: '1px 5px',
+                    }}>manual</span>
+                  )}
+                </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>Room</span>
                 <input
                   type="text"
-                  placeholder="Room…"
+                  placeholder="unassigned"
                   value={roomDrafts[device.identifier] ?? ''}
                   onChange={e => setRoomDrafts(prev => ({ ...prev, [device.identifier]: e.target.value }))}
                   onKeyDown={e => { if (e.key === 'Enter') saveRoom(device.identifier); }}
                   style={{
-                    fontSize: 12, padding: '4px 8px', borderRadius: 7, width: 120,
+                    fontSize: 12, padding: '4px 8px', borderRadius: 7, width: 90,
                     background: 'rgba(255,255,255,0.07)',
                     border: '1px solid rgba(255,255,255,0.1)',
                     color: '#fff', outline: 'none',
@@ -226,9 +428,58 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
                 >
                   {savingRoom[device.identifier] ? '…' : 'Set'}
                 </button>
+                {/* Manual hosts: full remove (also cleans .env). Discovered: hide. */}
+                <button
+                  onClick={() => isConfigured ? removeDevice(device.identifier) : ignoreDevice(device.identifier)}
+                  disabled={isBusy}
+                  title={isConfigured ? 'Remove device' : 'Hide device'}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 26, height: 26, borderRadius: 7, cursor: 'pointer', flexShrink: 0,
+                    background: 'rgba(255,69,58,0.12)',
+                    border: '1px solid rgba(255,69,58,0.25)',
+                    color: '#FF453A', opacity: isBusy ? 0.5 : 1,
+                    padding: 0,
+                  }}
+                >
+                  {isBusy
+                    ? <span style={{ fontSize: 11 }}>…</span>
+                    : isConfigured
+                      ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+                      : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  }
+                </button>
               </div>
             </div>
-          ))}
+            );
+          })}
+
+          {/* ── Hidden devices ── */}
+          {configHosts.ignored_devices.length > 0 && (<>
+            <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '10px 2px 4px' }}>Hidden</p>
+            {configHosts.ignored_devices.map(d => (
+              <div key={d.identifier} style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: 10, padding: '10px 12px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+              }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.4)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</p>
+                <button
+                  onClick={() => unignoreDevice(d.identifier)}
+                  disabled={unignoringDevice[d.identifier]}
+                  style={{
+                    fontSize: 11, padding: '4px 12px', borderRadius: 7, cursor: 'pointer', flexShrink: 0,
+                    background: 'rgba(48,209,88,0.12)',
+                    border: '1px solid rgba(48,209,88,0.3)',
+                    color: '#30D158', opacity: unignoringDevice[d.identifier] ? 0.5 : 1,
+                  }}
+                >
+                  {unignoringDevice[d.identifier] ? '…' : 'Unhide'}
+                </button>
+              </div>
+            ))}
+          </>)}
 
           {/* ── Connected hosts / kiosk ── */}
           <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '10px 2px 4px' }}>Connected Hosts</p>
@@ -335,6 +586,7 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
             </div>
             <Toggle value={debugMode} onChange={onDebugModeChange} />
           </div>
+          <RestartButton />
         </div>
       </div>
     </div>

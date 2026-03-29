@@ -8,6 +8,7 @@ import os
 import plistlib
 import random
 import re
+import signal
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -37,12 +38,56 @@ SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "30"))   # re-scan every N second
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "5"))    # poll now-playing every N seconds
 TMDB_API_KEY  = os.getenv("TMDB_API_KEY", "")
 OMDB_API_KEY  = os.getenv("OMDB_API_KEY", "trilogy")  # free fallback; register at omdbapi.com for higher limits
-# Comma-separated IPs for devices on other subnets that mDNS can't reach
-EXTRA_HOSTS        = [h.strip() for h in os.getenv("EXTRA_HOSTS", "").split(",") if h.strip()]
-# Comma-separated IPs for Kaleidescape players
-KALEIDESCAPE_HOSTS = [h.strip() for h in os.getenv("KALEIDESCAPE_HOSTS", "").split(",") if h.strip()]
 
+# ---------------------------------------------------------------------------
+# Mutable runtime config — persisted to whatsplaying_config.json
+# ---------------------------------------------------------------------------
+
+_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "whatsplaying_config.json")
 KIOSK_CONFIGS_PATH = os.path.join(os.path.dirname(__file__), "kiosk_configs.json")
+
+
+def _load_runtime_config() -> dict:
+    try:
+        with open(_CONFIG_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_runtime_config() -> None:
+    with open(_CONFIG_FILE, "w") as f:
+        json.dump({
+            "extra_hosts": EXTRA_HOSTS,
+            "kaleidescape_hosts": KALEIDESCAPE_HOSTS,
+            "ignored_devices": IGNORED_DEVICES,
+        }, f, indent=2)
+
+
+def _migrate_from_env() -> None:
+    """One-time migration: read lists from .env into the config file if not already present."""
+    cfg = _load_runtime_config()
+    changed = False
+    for key, env_key, default in [
+        ("extra_hosts",       "EXTRA_HOSTS",       []),
+        ("kaleidescape_hosts","KALEIDESCAPE_HOSTS", []),
+        ("ignored_devices",   "IGNORED_DEVICES",   []),
+    ]:
+        if key not in cfg:
+            env_val = os.getenv(env_key, "")
+            cfg[key] = [h.strip() for h in env_val.split(",") if h.strip()]
+            changed = True
+    if changed:
+        with open(_CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
+        logger.info("Migrated host config from .env → %s", _CONFIG_FILE)
+
+
+_migrate_from_env()
+_cfg = _load_runtime_config()
+EXTRA_HOSTS:        list[str] = _cfg.get("extra_hosts", [])
+KALEIDESCAPE_HOSTS: list[str] = _cfg.get("kaleidescape_hosts", [])
+IGNORED_DEVICES:    list[str] = _cfg.get("ignored_devices", [])
 
 
 def _is_appletv(conf) -> bool:
@@ -54,32 +99,68 @@ def _is_appletv(conf) -> bool:
     return "gen4" in model or "appletv" in model
 
 
-async def _probe_extra_host(ip: str) -> Optional[ATVConf]:
+async def _probe_extra_host(ip: str) -> Optional[tuple[ATVConf, str]]:
     """Probe an Apple TV by IP (for cross-subnet devices mDNS can't reach).
 
-    Fetches /info on the AirPlay port to get the device UUID and name, then
-    builds a manual pyatv config with AirPlay + Companion services.
+    Returns (conf, cred_id) where cred_id is the key to use for credentials.
+    First tries pyatv.scan(hosts=[ip]) to get accurate service ports.
+    Falls back to a manual AirPlay /info fetch if the scan finds nothing.
+    Credentials are keyed on the AirPlay /info "pi" UUID so they remain
+    consistent regardless of which discovery method is used.
     """
+    loop = asyncio.get_running_loop()
+
+    # Always fetch /info to get the pi UUID (credential key)
+    pi_uuid: Optional[str] = None
+    info_name: Optional[str] = None
     try:
         async with httpx.AsyncClient(timeout=5) as hc:
             r = await hc.get(f"http://{ip}:7000/info")
         info = plistlib.loads(r.content)
-        identifier = info.get("pi") or info.get("deviceID") or ip
-        name = info.get("name") or f"Apple TV ({ip})"
-
-        # Build credential dicts from stored creds if available
-        stored = get_for_device(identifier)
-        def _creds(proto_name: str) -> Optional[str]:
-            return stored.get(proto_name)
-
-        conf = ATVConf(ipaddress.IPv4Address(ip), name=name)
-        conf.add_service(ManualService(identifier, _Protocol.AirPlay,   7000,  {}, credentials=_creds("AirPlay")))
-        conf.add_service(ManualService(identifier, _Protocol.Companion, 49152, {}, credentials=_creds("Companion")))
-        logger.info("Probed extra host %s → %s (%s)", ip, name, identifier)
-        return conf
+        pi_uuid = info.get("pi") or info.get("deviceID")
+        info_name = info.get("name")
     except Exception as exc:
-        logger.warning("Could not probe extra host %s: %s", ip, exc)
-        return None
+        logger.debug("Could not fetch /info from %s: %s", ip, exc)
+
+    try:
+        # pyatv can unicast-scan a specific IP — this gives real service ports
+        found = await pyatv.scan(loop, hosts=[ip], timeout=5)
+        if found:
+            conf = found[0]
+            cred_id = pi_uuid or conf.identifier
+            stored = get_for_device(cred_id)
+            for svc in conf.services:
+                proto_name = str(svc.protocol).split(".")[-1]
+                cred = stored.get(proto_name)
+                if cred:
+                    svc.credentials = cred
+            logger.info("Probed extra host %s → %s (%s) via scan (creds key: %s)", ip, conf.name, conf.identifier, cred_id)
+            return conf, cred_id
+    except Exception as exc:
+        logger.debug("pyatv scan for %s failed: %s — falling back to /info", ip, exc)
+
+    # Fallback: build config manually from /info
+    if pi_uuid:
+        try:
+            name = info_name or f"Apple TV ({ip})"
+            # If there's an existing known device at this IP address, reuse its identifier
+            # (it may be a MAC-format id from a previous mDNS discovery with creds stored under it)
+            known = _load_known_devices()
+            existing_id = next((k for k, v in known.items() if v.get("address") == ip), None)
+            identifier = existing_id or pi_uuid
+            cred_id = identifier  # credentials stored under the same key
+            stored = get_for_device(cred_id)
+            def _creds(proto_name: str) -> Optional[str]:
+                return stored.get(proto_name)
+            conf = ATVConf(ipaddress.IPv4Address(ip), name=name)
+            conf.add_service(ManualService(identifier, _Protocol.AirPlay,   7000,  {}, credentials=_creds("AirPlay")))
+            conf.add_service(ManualService(identifier, _Protocol.Companion, 49152, {}, credentials=_creds("Companion")))
+            logger.info("Probed extra host %s → %s (%s) via /info fallback (creds key: %s)", ip, name, identifier, cred_id)
+            return conf, cred_id
+        except Exception as exc:
+            logger.warning("Could not build config for extra host %s: %s", ip, exc)
+
+    return None
 
 # ---------------------------------------------------------------------------
 # Known-device persistence
@@ -131,16 +212,18 @@ def _forget_known_device(identifier: str) -> None:
 def _offline_status(info: dict) -> dict:
     """Build a disconnected status snapshot from stored device info."""
     identifier = info["identifier"]
+    addr = info.get("address", "")
     return {
         "identifier": identifier,
         "name": info["name"],
-        "address": info.get("address", ""),
+        "address": addr,
         "hostname": "",
         "model": info.get("model", ""),
         "device_type": info.get("device_type", "appletv"),
         "room": info.get("room"),
         "connected": False,
         "paired": bool(get_for_device(identifier)),
+        "pinned": addr in EXTRA_HOSTS,
         "power": None,
         "now_playing": None,
     }
@@ -189,7 +272,8 @@ def _save_ip_kiosk_configs():
 
 # Protocol priority for pairing (best for metadata first)
 _PAIRING_PRIORITY = [_Protocol.Companion, _Protocol.MRP, _Protocol.AirPlay]
-_PROTO_NAME = {p: str(p).split(".")[-1] for p in _PAIRING_PRIORITY}
+_PROTO_NAME      = {p: str(p).split(".")[-1] for p in _PAIRING_PRIORITY}
+_PROTO_FROM_NAME = {v: k for k, v in _PROTO_NAME.items()}
 
 
 class PairFinishRequest(BaseModel):
@@ -201,12 +285,14 @@ class PairFinishRequest(BaseModel):
 # Background tasks
 # ---------------------------------------------------------------------------
 
-async def _connect_conf(conf) -> None:
+async def _connect_conf(conf, cred_id: Optional[str] = None) -> None:
     """Connect a device config if not already connected."""
     ident = conf.identifier
+    if ident in IGNORED_DEVICES:
+        return
     if ident not in clients:
         logger.info("New device: %s (%s)", conf.name, ident)
-        client = DeviceClient(conf)
+        client = DeviceClient(conf, cred_id=cred_id)
         clients[ident] = client
         await client.connect()
         # Persist so the device survives restarts even when offline
@@ -221,15 +307,20 @@ async def discovery_loop():
             found = [c for c in await pyatv.scan(loop, timeout=10) if _is_appletv(c)]
 
             # Add extra hosts (cross-subnet devices mDNS can't reach)
+            extra_results: list[tuple] = []
             for ip in EXTRA_HOSTS:
-                conf = await _probe_extra_host(ip)
-                if conf:
+                result = await _probe_extra_host(ip)
+                if result:
+                    conf, cred_id = result
                     found.append(conf)
+                    extra_results.append((conf, cred_id))
 
             found_ids = {c.identifier for c in found}
+            # Build a lookup so _connect_conf gets the right cred_id for extra hosts
+            extra_cred_ids = {conf.identifier: cred_id for conf, cred_id in extra_results}
 
             for conf in found:
-                await _connect_conf(conf)
+                await _connect_conf(conf, cred_id=extra_cred_ids.get(conf.identifier))
 
             # Mark devices that disappeared as disconnected (skip pinned extra hosts)
             extra_ids = set()
@@ -266,7 +357,9 @@ async def polling_loop():
         for client in list(clients.values()):
             status = await client.get_status()
             status["room"] = device_rooms.get(client.identifier)
-            status["paired"] = bool(get_for_device(client.identifier)) if not isinstance(client, KaleidescapeClient) else True
+            cid = client.cred_id if hasattr(client, "cred_id") else client.identifier
+            status["paired"] = bool(get_for_device(cid)) if not isinstance(client, KaleidescapeClient) else True
+            status["pinned"] = status.get("address", "") in EXTRA_HOSTS
             latest_statuses[client.identifier] = status
             statuses.append(status)
 
@@ -300,19 +393,24 @@ async def lifespan(app: FastAPI):
     found = [c for c in await pyatv.scan(loop, timeout=5) if _is_appletv(c)]
 
     # Add extra hosts (cross-subnet devices mDNS can't reach)
+    startup_extra: list[tuple] = []
     for ip in EXTRA_HOSTS:
-        conf = await _probe_extra_host(ip)
-        if conf:
+        result = await _probe_extra_host(ip)
+        if result:
+            conf, cred_id = result
             found.append(conf)
+            startup_extra.append((conf, cred_id))
 
+    startup_cred_ids = {conf.identifier: cred_id for conf, cred_id in startup_extra}
     for conf in found:
-        await _connect_conf(conf)
+        await _connect_conf(conf, cred_id=startup_cred_ids.get(conf.identifier))
 
     # Connect Kaleidescape players
     for ip in KALEIDESCAPE_HOSTS:
         kc = KaleidescapeClient(ip)
-        clients[kc.identifier] = kc
-        await kc.connect()
+        if kc.identifier not in IGNORED_DEVICES:
+            clients[kc.identifier] = kc
+            await kc.connect()
 
     # Launch background tasks
     asyncio.create_task(discovery_loop())
@@ -505,17 +603,21 @@ async def get_artwork(identifier: str):
 
 @app.post("/api/scan")
 async def trigger_scan():
-    """Manually trigger a device scan."""
+    """Manually trigger a device scan (mDNS + EXTRA_HOSTS probe)."""
     loop = asyncio.get_running_loop()
     found = [c for c in await pyatv.scan(loop, timeout=5) if _is_appletv(c)]
+    extra_cred_ids: dict[str, str] = {}
+    for ip in EXTRA_HOSTS:
+        result = await _probe_extra_host(ip)
+        if result:
+            conf, cred_id = result
+            found.append(conf)
+            extra_cred_ids[conf.identifier] = cred_id
     new_devices = []
     for conf in found:
-        ident = conf.identifier
-        if ident not in clients:
-            client = DeviceClient(conf)
-            clients[ident] = client
-            await client.connect()
+        if conf.identifier not in clients:
             new_devices.append(conf.name)
+        await _connect_conf(conf, cred_id=extra_cred_ids.get(conf.identifier))
     return {"scanned": len(found), "new_devices": new_devices}
 
 
@@ -823,8 +925,9 @@ async def get_youtube_thumbnail(title: str, channel: Optional[str] = None):
 @app.delete("/api/devices/{identifier}/credentials")
 async def delete_credentials(identifier: str):
     """Forget all stored credentials for a device and reconnect unpaired."""
-    forget_credentials(identifier)
     client = clients.get(identifier)
+    cred_key = client.cred_id if client else identifier
+    forget_credentials(cred_key)
     if client:
         await client.disconnect()
         await client.connect()  # reconnects without credentials
@@ -833,9 +936,109 @@ async def delete_credentials(identifier: str):
 
 @app.delete("/api/devices/{identifier}")
 async def forget_device(identifier: str):
-    """Remove a device entirely — credentials, known list, and active client."""
+    """Remove a device entirely — credentials, known list, active client, and .env host entries."""
+    # Determine the device's IP before removing state
+    ip: Optional[str] = None
+    status = latest_statuses.get(identifier)
+    if status:
+        ip = status.get("address") or None
+    if not ip and identifier.startswith("kaleidescape-"):
+        ip = identifier[len("kaleidescape-"):]
+    if not ip:
+        client_obj = clients.get(identifier)
+        if client_obj and hasattr(client_obj, "conf"):
+            ip = str(client_obj.conf.address)
+
     forget_credentials(identifier)
     _forget_known_device(identifier)
+    client = clients.pop(identifier, None)
+    if client:
+        await client.disconnect()
+    latest_statuses.pop(identifier, None)
+    device_rooms.pop(identifier, None)
+
+    # Remove from configured host lists so the device doesn't reconnect on restart
+    if ip:
+        changed = False
+        if ip in EXTRA_HOSTS:
+            EXTRA_HOSTS.remove(ip)
+            _save_runtime_config()
+            changed = True
+        if ip in KALEIDESCAPE_HOSTS:
+            KALEIDESCAPE_HOSTS.remove(ip)
+            _save_runtime_config()
+            changed = True
+        if changed:
+            logger.info("Removed %s from configured hosts", ip)
+
+    return {"success": True}
+
+
+class RoomBody(BaseModel):
+    room: Optional[str] = None
+
+
+class AddHostBody(BaseModel):
+    ip: str
+    host_type: str  # "appletv" or "kaleidescape"
+
+
+@app.get("/api/config/hosts")
+async def get_config_hosts():
+    """Return currently configured extra hosts and ignored device list."""
+    known = _load_known_devices()
+    ignored = [
+        {"identifier": ident, "name": known.get(ident, {}).get("name", ident)}
+        for ident in IGNORED_DEVICES
+    ]
+    return {"extra_hosts": EXTRA_HOSTS, "kaleidescape_hosts": KALEIDESCAPE_HOSTS, "ignored_devices": ignored}
+
+
+@app.post("/api/config/hosts")
+async def add_config_host(body: AddHostBody):
+    """Add a device by IP to EXTRA_HOSTS or KALEIDESCAPE_HOSTS and connect it immediately."""
+    ip = body.ip.strip()
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        return {"error": f"Invalid IP address: {ip}"}
+
+    if body.host_type == "appletv":
+        if ip not in EXTRA_HOSTS:
+            EXTRA_HOSTS.append(ip)
+            _save_runtime_config()
+        result = await _probe_extra_host(ip)
+        if result:
+            conf, cred_id = result
+            await _connect_conf(conf, cred_id=cred_id)
+            return {"success": True, "identifier": conf.identifier, "name": conf.name}
+        else:
+            # Keep in .env for future retry even if unreachable now
+            return {"error": f"Could not reach device at {ip}"}
+
+    elif body.host_type == "kaleidescape":
+        if ip not in KALEIDESCAPE_HOSTS:
+            KALEIDESCAPE_HOSTS.append(ip)
+            _save_runtime_config()
+        kscape_id = f"kaleidescape-{ip}"
+        if kscape_id not in clients:
+            kc = KaleidescapeClient(ip)
+            clients[kc.identifier] = kc
+            await kc.connect()
+            return {"success": True, "identifier": kc.identifier}
+        return {"success": True}
+
+    else:
+        return {"error": f"Unknown host_type: {body.host_type}"}
+
+
+@app.post("/api/devices/{identifier}/ignore")
+async def ignore_device(identifier: str):
+    """Hide a device from the UI without deleting its credentials or known-device entry."""
+    if identifier not in IGNORED_DEVICES:
+        IGNORED_DEVICES.append(identifier)
+        _save_runtime_config()
+    # Disconnect and remove from active state but keep in known_devices
     client = clients.pop(identifier, None)
     if client:
         await client.disconnect()
@@ -844,8 +1047,58 @@ async def forget_device(identifier: str):
     return {"success": True}
 
 
-class RoomBody(BaseModel):
-    room: Optional[str] = None
+@app.delete("/api/devices/{identifier}/ignore")
+async def unignore_device(identifier: str):
+    """Unhide a device — remove from ignore list and restore its offline status."""
+    if identifier in IGNORED_DEVICES:
+        IGNORED_DEVICES.remove(identifier)
+        _save_runtime_config()
+    known = _load_known_devices()
+    if identifier in known:
+        info = known[identifier]
+        latest_statuses[identifier] = _offline_status(info)
+        device_rooms[identifier] = info.get("room")
+    return {"success": True}
+
+
+def _get_device_ip(identifier: str) -> Optional[str]:
+    """Return the IP address for a device from status cache or active client."""
+    status = latest_statuses.get(identifier)
+    if status:
+        ip = status.get("address") or None
+        if ip:
+            return ip
+    client_obj = clients.get(identifier)
+    if client_obj and hasattr(client_obj, "conf"):
+        return str(client_obj.conf.address)
+    return None
+
+
+@app.post("/api/devices/{identifier}/pin")
+async def pin_device(identifier: str):
+    """Add this device's IP to EXTRA_HOSTS so it reconnects even without mDNS."""
+    ip = _get_device_ip(identifier)
+    if not ip:
+        return {"error": "Cannot determine device IP"}
+    if ip not in EXTRA_HOSTS:
+        EXTRA_HOSTS.append(ip)
+        _save_runtime_config()
+    if identifier in latest_statuses:
+        latest_statuses[identifier]["pinned"] = True
+    return {"success": True}
+
+
+@app.delete("/api/devices/{identifier}/pin")
+async def unpin_device(identifier: str):
+    """Remove this device's IP from EXTRA_HOSTS (still discovered via mDNS if reachable)."""
+    ip = _get_device_ip(identifier)
+    if ip and ip in EXTRA_HOSTS:
+        EXTRA_HOSTS.remove(ip)
+        _save_runtime_config()
+    if identifier in latest_statuses:
+        latest_statuses[identifier]["pinned"] = False
+    return {"success": True}
+
 
 
 @app.put("/api/devices/{identifier}/room")
@@ -865,17 +1118,42 @@ async def set_device_room(identifier: str, body: RoomBody):
 # Pairing endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/api/devices/{identifier}/pairing")
+async def get_device_pairing(identifier: str):
+    """Return pairing status (available + credentialed) for each protocol on a device."""
+    client = clients.get(identifier)
+    cred_key = client.cred_id if client else identifier
+    stored = get_for_device(cred_key)
+    available_names: set[str] = set()
+    if client and hasattr(client, "conf"):
+        available_names = {str(svc.protocol).split(".")[-1] for svc in client.conf.services}
+    protos = [
+        {"name": p, "available": p in available_names, "paired": p in stored}
+        for p in ["Companion", "MRP", "AirPlay"]
+    ]
+    return {"protocols": protos}
+
+
 @app.post("/api/devices/{identifier}/pair/start")
-async def start_pairing(identifier: str):
-    """Initiate pyatv pairing for the next unpaired protocol on a device."""
+async def start_pairing(identifier: str, protocol: Optional[str] = None):
+    """Initiate pyatv pairing. Pass ?protocol=Name to target a specific protocol."""
     client = clients.get(identifier)
     if not client:
         return {"error": "Device not found"}
 
-    already_stored = get_for_device(identifier)
+    already_stored = get_for_device(client.cred_id)
     available = {svc.protocol for svc in client.conf.services}
-    # Skip protocols we already have credentials for
-    candidates = [p for p in _PAIRING_PRIORITY if p in available and _PROTO_NAME[p] not in already_stored]
+
+    if protocol:
+        proto_enum = _PROTO_FROM_NAME.get(protocol)
+        if proto_enum is None:
+            return {"error": f"Unknown protocol: {protocol}"}
+        if proto_enum not in available:
+            return {"error": f"{protocol} is not available on this device"}
+        candidates = [proto_enum]
+    else:
+        # Skip protocols we already have credentials for
+        candidates = [p for p in _PAIRING_PRIORITY if p in available and _PROTO_NAME[p] not in already_stored]
     if not candidates:
         return {"error": "All supported protocols are already paired"}
 
@@ -936,9 +1214,10 @@ async def finish_pairing(identifier: str, body: PairFinishRequest):
         return {"error": "Pairing failed — wrong PIN or device rejected"}
 
     proto_name = str(pairing.service.protocol).split(".")[-1]
-    save_credential(identifier, proto_name, pairing.service.credentials)
+    cred_key = clients[identifier].cred_id if identifier in clients else identifier
+    save_credential(cred_key, proto_name, pairing.service.credentials)
     await pairing.close()
-    logger.info("Paired %s via %s", identifier, proto_name)
+    logger.info("Paired %s via %s (creds key: %s)", identifier, proto_name, cred_key)
 
     # Reconnect with the new credentials
     client = clients.get(identifier)
@@ -999,6 +1278,16 @@ async def admin_set_kiosk(client_id: str, body: KioskConfigBody):
         except Exception:
             pass
 
+    return {"ok": True}
+
+
+@app.post("/api/admin/restart")
+async def restart_server():
+    """Restart the server process. launchctl KeepAlive will bring it back up."""
+    async def _deferred():
+        await asyncio.sleep(0.2)
+        os.kill(os.getpid(), signal.SIGTERM)
+    asyncio.create_task(_deferred())
     return {"ok": True}
 
 

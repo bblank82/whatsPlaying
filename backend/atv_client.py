@@ -32,9 +32,10 @@ def _resolve_hostname(ip: str) -> str:
 class DeviceClient(PushListener):
     """Holds an active connection to one Apple TV and exposes now-playing info."""
 
-    def __init__(self, conf):
+    def __init__(self, conf, cred_id: Optional[str] = None):
         self.conf = conf
         self.identifier: str = conf.identifier
+        self.cred_id: str = cred_id or conf.identifier  # key used to look up / save credentials
         self.name: str = conf.name
         self.address: str = str(conf.address)
         self._atv = None
@@ -66,7 +67,7 @@ class DeviceClient(PushListener):
 
     async def connect(self) -> bool:
         try:
-            stored = get_for_device(self.identifier)
+            stored = get_for_device(self.cred_id)
             for svc in self.conf.services:
                 proto_name = str(svc.protocol).split(".")[-1]
                 if proto_name in stored:

@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 
-type Step = 'confirm_forget' | 'starting' | 'enter_pin' | 'show_pin' | 'finishing' | 'done_partial' | 'done' | 'error';
-
-const PROTO_LABELS: Record<string, string> = {
-  Companion: 'Companion',
-  MRP: 'MRP',
-  AirPlay: 'AirPlay',
-};
+type Step = 'protocols' | 'starting' | 'enter_pin' | 'show_pin' | 'finishing' | 'done_partial' | 'done' | 'error';
 
 const PROTO_DESCRIPTIONS: Record<string, string> = {
-  AirPlay: 'Enables richer media info for third-party apps.',
-  MRP: 'Enables full media metadata.',
-  Companion: 'Enables device control and basic state.',
+  Companion: 'Device control and basic app state.',
+  MRP:       'Full media metadata and playback info.',
+  AirPlay:   'Richer media info for third-party apps.',
 };
+
+interface ProtocolInfo {
+  name: string;
+  available: boolean;
+  paired: boolean;
+}
 
 interface Props {
   deviceId: string;
@@ -59,7 +59,9 @@ const btn: React.CSSProperties = {
 // ---------------------------------------------------------------------------
 
 export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget }: Props) {
-  const [step, setStep]       = useState<Step>(isConnected ? 'confirm_forget' : 'starting');
+  const [step, setStep]             = useState<Step>(isConnected ? 'protocols' : 'starting');
+  const [protocols, setProtocols]   = useState<ProtocolInfo[]>([]);
+  const [proLoading, setProLoading] = useState(isConnected ?? false);
   const [pairingId, setPairingId]   = useState('');
   const [protocol, setProtocol]     = useState('');
   const [pin, setPin]               = useState('');
@@ -70,7 +72,10 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
   const startedRef  = useRef(false);
 
   useEffect(() => {
-    if (isConnected) return; // wait for explicit confirmation
+    if (isConnected) {
+      loadProtocols();
+      return;
+    }
     if (startedRef.current) return;
     startedRef.current = true;
     startPairing();
@@ -80,29 +85,37 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
     if (step === 'enter_pin') pinInputRef.current?.focus();
   }, [step]);
 
-  async function forgetAndStart() {
-    setStep('starting');
+  async function loadProtocols() {
+    setProLoading(true);
     try {
-      await fetch(`/api/devices/${deviceId}/credentials`, { method: 'DELETE' });
+      const r = await fetch(`/api/devices/${deviceId}/pairing`);
+      const data = await r.json();
+      setProtocols(data.protocols ?? []);
     } catch { /* ignore */ }
+    finally { setProLoading(false); }
+  }
+
+  async function forgetAndStart() {
+    try { await fetch(`/api/devices/${deviceId}/credentials`, { method: 'DELETE' }); } catch { /* ignore */ }
     startPairing();
   }
 
   async function forgetDevice() {
-    try {
-      await fetch(`/api/devices/${deviceId}`, { method: 'DELETE' });
-    } catch { /* ignore */ }
+    try { await fetch(`/api/devices/${deviceId}`, { method: 'DELETE' }); } catch { /* ignore */ }
     onForget?.();
     onClose();
   }
 
-  async function startPairing() {
+  async function startPairing(proto?: string) {
     startedRef.current = true;
     setStep('starting');
     setError('');
     setPin('');
+    const url = proto
+      ? `/api/devices/${deviceId}/pair/start?protocol=${encodeURIComponent(proto)}`
+      : `/api/devices/${deviceId}/pair/start`;
     try {
-      const res  = await fetch(`/api/devices/${deviceId}/pair/start`, { method: 'POST' });
+      const res  = await fetch(url, { method: 'POST' });
       const data = await res.json();
       if (data.error) { setError(data.error); setStep('error'); return; }
       setPairingId(data.pairing_id);
@@ -131,9 +144,15 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
       });
       const data = await res.json();
       if (data.error) { setError(data.error); setStep('error'); return; }
-      const rem: string[] = data.remaining_protocols ?? [];
-      setRemaining(rem);
-      setStep(rem.length > 0 ? 'done_partial' : 'done');
+      if (isConnected) {
+        // Return to protocol overview with refreshed status
+        await loadProtocols();
+        setStep('protocols');
+      } else {
+        const rem: string[] = data.remaining_protocols ?? [];
+        setRemaining(rem);
+        setStep(rem.length > 0 ? 'done_partial' : 'done');
+      }
     } catch (e) {
       setError(String(e));
       setStep('error');
@@ -175,7 +194,7 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
           }}>
             <div>
               <p style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
-                {step === 'confirm_forget' ? 'Re-pair Device' : 'Pair with Apple TV'}
+                {isConnected ? 'Pairing' : 'Pair with Apple TV'}
               </p>
               <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.38)', marginTop: 2 }}>{deviceName}</p>
             </div>
@@ -192,41 +211,81 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
           </div>
 
           {/* Body */}
-          <div style={{ padding: '20px 18px 22px' }}>
+          <div style={{ padding: '16px 18px 20px' }}>
 
-            {/* ── Confirm forget ── */}
-            {step === 'confirm_forget' && (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 10 }}>
-                <IconCircle color="#FF9F0A">
-                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#FF9F0A" strokeWidth="2.2" strokeLinecap="round">
-                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                    <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-                  </svg>
-                </IconCircle>
-                <p style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>Forget &amp; Re-pair?</p>
-                <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5, maxWidth: 260 }}>
-                  Saved credentials for <span style={{ color: 'rgba(255,255,255,0.75)' }}>{deviceName}</span> will be removed and you'll need to pair again.
-                </p>
-                <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 6 }}>
-                  <button onClick={onClose} style={{ ...btn, background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)' }}>
-                    Cancel
-                  </button>
-                  <button onClick={forgetAndStart} style={{ ...btn, background: '#FF453A', color: '#fff' }}>
-                    Forget &amp; Re-pair
-                  </button>
-                </div>
-                {onForget && (
-                  <button
-                    onClick={forgetDevice}
-                    style={{ ...btn, flex: 'none', width: '100%', marginTop: 4, background: 'none', color: 'rgba(255,255,255,0.3)', fontSize: 13 }}
-                  >
-                    Forget Device
-                  </button>
+            {/* ── Protocol overview (connected devices) ── */}
+            {step === 'protocols' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {proLoading ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0', color: 'rgba(255,255,255,0.3)' }}>
+                    <Spinner />
+                  </div>
+                ) : (
+                  protocols.filter(p => p.available).map(p => (
+                    <div key={p.name} style={{
+                      background: '#2c2c2e', borderRadius: 12,
+                      padding: '11px 14px',
+                      display: 'flex', alignItems: 'center', gap: 10,
+                    }}>
+                      {/* Status dot */}
+                      <div style={{
+                        width: 8, height: 8, borderRadius: 4, flexShrink: 0,
+                        background: !p.available ? 'rgba(255,255,255,0.2)'
+                          : p.paired ? '#30D158' : 'rgba(255,255,255,0.2)',
+                        boxShadow: p.available && p.paired ? '0 0 6px #30D15866' : 'none',
+                      }} />
+                      {/* Name + description */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#fff', lineHeight: 1 }}>{p.name}</p>
+                        <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 3, lineHeight: 1.3 }}>
+                          {PROTO_DESCRIPTIONS[p.name]}
+                        </p>
+                      </div>
+                      {/* Status label + button */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
+                        <span style={{ fontSize: 11, color: p.paired ? '#30D158' : 'rgba(255,255,255,0.3)' }}>
+                          {p.paired ? 'Paired' : 'Not paired'}
+                        </span>
+                        <button
+                          onClick={() => startPairing(p.name)}
+                          style={{
+                            fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 7,
+                            cursor: 'pointer',
+                            background: p.paired ? 'rgba(255,255,255,0.08)' : 'rgba(10,132,255,0.22)',
+                            border: `1px solid ${p.paired ? 'rgba(255,255,255,0.12)' : 'rgba(10,132,255,0.4)'}`,
+                            color: p.paired ? 'rgba(255,255,255,0.55)' : '#0A84FF',
+                          }}
+                        >
+                          {p.paired ? 'Re-pair' : 'Pair'}
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                {/* Destructive actions */}
+                {!proLoading && (
+                  <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 12 }}>
+                    <button
+                      onClick={forgetAndStart}
+                      style={{ ...btn, flex: 'none', background: 'rgba(255,69,58,0.15)', color: '#FF453A', border: '1px solid rgba(255,69,58,0.25)' }}
+                    >
+                      Forget &amp; Re-pair All
+                    </button>
+                    {onForget && (
+                      <button
+                        onClick={forgetDevice}
+                        style={{ ...btn, flex: 'none', background: 'none', color: 'rgba(255,255,255,0.3)', fontSize: 13 }}
+                      >
+                        Forget Device
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             )}
 
-            {/* ── Loading ── */}
+            {/* ── Loading / finishing ── */}
             {(step === 'starting' || step === 'finishing') && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '28px 0', gap: 12, color: 'rgba(255,255,255,0.35)' }}>
                 <Spinner />
@@ -262,7 +321,7 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
                 />
                 {protocol && (
                   <p style={{ textAlign: 'center', fontSize: 11, color: 'rgba(255,255,255,0.22)' }}>
-                    via {PROTO_LABELS[protocol] ?? protocol}
+                    via {protocol}
                   </p>
                 )}
                 <button
@@ -291,7 +350,7 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
                 </div>
                 {protocol && (
                   <p style={{ textAlign: 'center', fontSize: 11, color: 'rgba(255,255,255,0.22)' }}>
-                    via {PROTO_LABELS[protocol] ?? protocol}
+                    via {protocol}
                   </p>
                 )}
                 <button onClick={finishPairing} style={{ ...btn, flex: 'none', background: '#0A84FF', color: '#fff' }}>
@@ -300,7 +359,7 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
               </div>
             )}
 
-            {/* ── Partially done ── */}
+            {/* ── Partially done (first-time / non-connected flow) ── */}
             {step === 'done_partial' && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 10 }}>
                 <IconCircle color="#30D158">
@@ -309,7 +368,7 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
                   </svg>
                 </IconCircle>
                 <p style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
-                  {PROTO_LABELS[protocol] ?? protocol} Paired
+                  {protocol} Paired
                 </p>
                 <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', maxWidth: 260, lineHeight: 1.5 }}>
                   Pair additional protocols for more features.
@@ -319,7 +378,7 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
                     width: '100%', background: '#2c2c2e', borderRadius: 12,
                     padding: '12px 14px', textAlign: 'left',
                   }}>
-                    <p style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{PROTO_LABELS[proto] ?? proto}</p>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{proto}</p>
                     {PROTO_DESCRIPTIONS[proto] && (
                       <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.38)', marginTop: 3 }}>{PROTO_DESCRIPTIONS[proto]}</p>
                     )}
@@ -327,8 +386,8 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
                 ))}
                 <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 4 }}>
                   {remaining.length > 0 && (
-                    <button onClick={startPairing} style={{ ...btn, background: '#0A84FF', color: '#fff' }}>
-                      Pair {PROTO_LABELS[remaining[0]] ?? remaining[0]}
+                    <button onClick={() => startPairing()} style={{ ...btn, background: '#0A84FF', color: '#fff' }}>
+                      Pair {remaining[0]}
                     </button>
                   )}
                   <button onClick={onClose} style={{ ...btn, background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)' }}>
@@ -368,8 +427,11 @@ export function PairModal({ deviceId, deviceName, isConnected, onClose, onForget
                   {error}
                 </p>
                 <div style={{ display: 'flex', gap: 8, width: '100%', marginTop: 4 }}>
-                  <button onClick={startPairing} style={{ ...btn, background: '#0A84FF', color: '#fff' }}>
-                    Try Again
+                  <button
+                    onClick={() => isConnected ? setStep('protocols') : startPairing()}
+                    style={{ ...btn, background: '#0A84FF', color: '#fff' }}
+                  >
+                    {isConnected ? 'Back' : 'Try Again'}
                   </button>
                   <button onClick={onClose} style={{ ...btn, background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)' }}>
                     Cancel

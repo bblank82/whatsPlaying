@@ -55,9 +55,9 @@ cd backend && source .venv/bin/activate && python main.py
 - `frontend/src/contexts/debug.ts` — React context for routing log entries to the debug panel
 - `frontend/src/components/DeviceCard.tsx` — per-device card, artwork, transport controls
 - `frontend/src/components/ArtworkModal.tsx` — fullscreen artwork; click-to-close when not in kiosk mode
-- `frontend/src/components/AdminModal.tsx` — Settings panel: show-unpaired toggle, scan button, room assignment per device, kiosk management, debug toggle
+- `frontend/src/components/AdminModal.tsx` — Settings panel: show-unpaired toggle, scan button, add/remove device by IP, room assignment, hidden devices, kiosk management, server restart, debug toggle
 - `frontend/src/components/RemoteModal.tsx` — navigation/transport remote (no volume buttons)
-- `frontend/src/components/PairModal.tsx` — pairing flow; has "Forget & Re-pair" and "Forget Device" (calls `DELETE /api/devices/{id}`)
+- `frontend/src/components/PairModal.tsx` — shows all available protocols with paired/unpaired status; individual Pair/Re-pair per protocol; "Forget & Re-pair All" and "Forget Device"
 - `frontend/src/types.ts` — shared TypeScript types
 
 ## Device sort order
@@ -67,7 +67,7 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - `backend/known_devices.json` — persists `{identifier, name, address, model, device_type, room}` for all seen devices
 - Loaded at startup: pre-populates `latest_statuses` and `device_rooms` with offline entries so devices appear immediately
 - Written whenever a new device connects (`_connect_conf`) — preserves existing `room` field
-- Forget device: `DELETE /api/devices/{id}` removes from known list, credentials, clients, statuses, and `device_rooms`
+- Forget device: `DELETE /api/devices/{id}` removes from known list, credentials, clients, statuses, `device_rooms`, and strips IP from `EXTRA_HOSTS`/`KALEIDESCAPE_HOSTS` in `.env`
 
 ## Room concept
 - Each device can be assigned to a named room (string, e.g. `"Theater"`, `"Living Room"`)
@@ -80,6 +80,14 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - mDNS scan timeout: 10 seconds
 - Devices that miss a scan are **disconnected but kept** in `clients` — not deleted (mDNS is flaky)
 - Kaleidescape clients are never touched by the Apple TV discovery loop
+- `IGNORED_DEVICES` (comma-separated identifiers in `.env`) — devices in this list are skipped by `_connect_conf` and the Kaleidescape startup loop; they remain in `known_devices.json` so they can be un-hidden from Settings
+
+## Device pinning
+- **Pin** = add device's IP to `EXTRA_HOSTS` — device reconnects by direct TCP probe even without mDNS (useful when moving networks)
+- **Unpin** = remove from `EXTRA_HOSTS` — device still appears if mDNS discovers it
+- Pin state is injected as `pinned: bool` into every device status in the polling loop
+- `POST /api/devices/{id}/pin` and `DELETE /api/devices/{id}/pin` — update `EXTRA_HOSTS` and `.env` immediately
+- Pin icon (location pin) on DeviceCard header — filled/blue when pinned; only shown for Apple TVs (Kaleidescape is always manual)
 
 ## Kiosk mode
 - Managed remotely via Settings panel (gear icon, upper-left)
@@ -95,9 +103,12 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 ## Settings panel (AdminModal)
 - **Show unpaired devices** toggle — persisted to `localStorage`
 - **Scan** button — triggers immediate mDNS re-scan
-- **Devices section** — lists all devices with inline room text input (Enter or Set button saves)
+- **Devices section** — "Add device by IP" form (type: Apple TV or Kaleidescape); lists all devices with room input and hide/remove buttons
+  - Auto-discovered devices → hide button (eye-slash) → adds to `IGNORED_DEVICES`
+  - Manually configured devices (in EXTRA_HOSTS/KALEIDESCAPE_HOSTS) → trash button → full forget + removes from `.env`
+- **Hidden section** — appears when `IGNORED_DEVICES` is non-empty; shows hidden devices with Unhide button
 - **Connected Hosts section** — per browser client kiosk config (enable/disable, orientation, display binding)
-- **Developer section** — Debug panel toggle (persisted to `localStorage`)
+- **Developer section** — Debug panel toggle; Restart server button (two-step confirm → `POST /api/admin/restart` → SIGTERM → launchctl restarts)
 
 ## Debug panel
 - Enabled via the Developer section in Settings
@@ -128,7 +139,13 @@ TMDB_API_KEY=...
 OMDB_API_KEY=...
 EXTRA_HOSTS=192.168.89.161        # comma-separated Apple TV IPs on other subnets
 KALEIDESCAPE_HOSTS=192.168.75.214 # comma-separated Kaleidescape player IPs
+IGNORED_DEVICES=                  # comma-separated device identifiers to hide from UI
 ```
+
+## .env management
+- `_update_env_var(key, value)` in `main.py` — safely rewrites a single `KEY=value` line in `.env` without touching other settings
+- **Important**: always ensures the last line ends with `\n` before appending a new key, to prevent concatenation bugs
+- Modified at runtime by: pin/unpin, add/remove host, hide/unhide device, server restart writes nothing (reads only)
 
 ## Logo / favicon
 - `frontend/public/logo.png` — "What's Playing" branded logo. Source of truth is the root `logo.png`; copy to `frontend/public/logo.png` then rebuild to deploy.

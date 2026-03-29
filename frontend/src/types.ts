@@ -30,6 +30,7 @@ export interface DeviceStatus {
   room: string | null;
   connected: boolean;
   paired?: boolean;
+  pinned?: boolean;
   power: string | null;
   now_playing: NowPlaying | null;
 }

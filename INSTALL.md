@@ -75,18 +75,18 @@ cat > ~/Library/LaunchAgents/com.whatsplaying.plist << 'EOF'
     <string>com.whatsplaying</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/YOUR_USERNAME/appletv-monitor/start.sh</string>
+        <string>/Users/bblank/appletv-monitor/start.sh</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/YOUR_USERNAME/appletv-monitor</string>
+    <string>/Users/bblank/appletv-monitor</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/YOUR_USERNAME/appletv-monitor/server.log</string>
+    <string>/Users/bblank/appletv-monitor/server.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/YOUR_USERNAME/appletv-monitor/server.log</string>
+    <string>/Users/bblank/appletv-monitor/server.log</string>
 </dict>
 </plist>
 EOF
