@@ -105,57 +105,58 @@ async def _probe_extra_host(ip: str) -> Optional[tuple[ATVConf, str]]:
     Returns (conf, cred_id) where cred_id is the key to use for credentials.
     First tries pyatv.scan(hosts=[ip]) to get accurate service ports.
     Falls back to a manual AirPlay /info fetch if the scan finds nothing.
-    Credentials are keyed on the AirPlay /info "pi" UUID so they remain
-    consistent regardless of which discovery method is used.
+    Credentials are keyed on deviceID (MAC) from /info — this is the same
+    identifier used by mDNS discovery, so credentials are always found.
     """
     loop = asyncio.get_running_loop()
 
-    # Always fetch /info to get the pi UUID (credential key)
-    pi_uuid: Optional[str] = None
+    # Fetch /info to get deviceID (MAC) — our stable credential key
+    device_mac: Optional[str] = None  # from /info "deviceID" — matches mDNS identifier
     info_name: Optional[str] = None
     try:
         async with httpx.AsyncClient(timeout=5) as hc:
             r = await hc.get(f"http://{ip}:7000/info")
         info = plistlib.loads(r.content)
-        pi_uuid = info.get("pi") or info.get("deviceID")
+        device_mac = info.get("deviceID")  # MAC address — stable, matches mDNS-discovered identifier
         info_name = info.get("name")
     except Exception as exc:
         logger.debug("Could not fetch /info from %s: %s", ip, exc)
 
+    # Determine the canonical identifier for this device (prefer known MAC from prior mDNS discovery)
+    known = _load_known_devices()
+    existing_id = next((k for k, v in known.items() if v.get("address") == ip), None)
+    canonical_id = existing_id or device_mac  # MAC identifier, consistent with mDNS
+
     try:
-        # pyatv can unicast-scan a specific IP — this gives real service ports
+        # pyatv can unicast-scan a specific IP — this gives real service ports/protocols
         found = await pyatv.scan(loop, hosts=[ip], timeout=5)
         if found:
-            conf = found[0]
-            cred_id = pi_uuid or conf.identifier
+            scanned = found[0]
+            cred_id = canonical_id or scanned.identifier
             stored = get_for_device(cred_id)
-            for svc in conf.services:
+            # Rebuild conf using canonical_id as service identifier so clients dict
+            # and known_devices remain keyed by MAC, not pyatv's UUID identifier.
+            conf = ATVConf(ipaddress.IPv4Address(ip), name=info_name or scanned.name)
+            for svc in scanned.services:
                 proto_name = str(svc.protocol).split(".")[-1]
-                cred = stored.get(proto_name)
-                if cred:
-                    svc.credentials = cred
-            logger.info("Probed extra host %s → %s (%s) via scan (creds key: %s)", ip, conf.name, conf.identifier, cred_id)
+                new_svc = ManualService(cred_id, svc.protocol, svc.port, {}, credentials=stored.get(proto_name))
+                conf.add_service(new_svc)
+            logger.info("Probed extra host %s → %s (%s) via scan (creds key: %s)", ip, conf.name, cred_id, cred_id)
             return conf, cred_id
     except Exception as exc:
         logger.debug("pyatv scan for %s failed: %s — falling back to /info", ip, exc)
 
-    # Fallback: build config manually from /info
-    if pi_uuid:
+    # Fallback: build config manually from /info — AirPlay only (port 7000 is reliable;
+    # Companion port is dynamic and can't be guessed here, so skip it to avoid
+    # ConnectionFailedError when stale Companion creds cause auth to fail)
+    if canonical_id:
         try:
             name = info_name or f"Apple TV ({ip})"
-            # If there's an existing known device at this IP address, reuse its identifier
-            # (it may be a MAC-format id from a previous mDNS discovery with creds stored under it)
-            known = _load_known_devices()
-            existing_id = next((k for k, v in known.items() if v.get("address") == ip), None)
-            identifier = existing_id or pi_uuid
-            cred_id = identifier  # credentials stored under the same key
+            cred_id = canonical_id
             stored = get_for_device(cred_id)
-            def _creds(proto_name: str) -> Optional[str]:
-                return stored.get(proto_name)
             conf = ATVConf(ipaddress.IPv4Address(ip), name=name)
-            conf.add_service(ManualService(identifier, _Protocol.AirPlay,   7000,  {}, credentials=_creds("AirPlay")))
-            conf.add_service(ManualService(identifier, _Protocol.Companion, 49152, {}, credentials=_creds("Companion")))
-            logger.info("Probed extra host %s → %s (%s) via /info fallback (creds key: %s)", ip, name, identifier, cred_id)
+            conf.add_service(ManualService(cred_id, _Protocol.AirPlay, 7000, {}, credentials=stored.get("AirPlay")))
+            logger.info("Probed extra host %s → %s (%s) via /info fallback (creds key: %s)", ip, name, cred_id, cred_id)
             return conf, cred_id
         except Exception as exc:
             logger.warning("Could not build config for extra host %s: %s", ip, exc)
@@ -1361,4 +1362,4 @@ if os.path.isdir(_DIST):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
