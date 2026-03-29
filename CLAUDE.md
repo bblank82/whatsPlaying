@@ -27,6 +27,11 @@ cd backend && source .venv/bin/activate && python main.py
 - Credentials stored in `backend/credentials.json`
 - Known devices persisted in `backend/known_devices.json` — loaded on startup so offline devices still appear in the UI
 - Push state staleness: if `metadata.app` (live) differs from the cached push state's `app_id`, cache is discarded and a fresh poll runs. Cache older than 60 s is also discarded. `playstatus_error` clears the cache immediately.
+- **Cross-subnet probing** (`_probe_extra_host`): fetches `http://{ip}:7000/info` to get `deviceID` (MAC address) — the stable identifier that matches mDNS discovery and credentials storage. `pi` in the /info response is a session UUID, NOT the device identifier — never use it as a key.
+  - First tries `pyatv.scan(hosts=[ip])` to get accurate service ports; rebuilds conf with canonical MAC as service identifier to avoid UUID keys in `clients`/`known_devices`
+  - Falls back to AirPlay-only manual config (port 7000) if scan returns nothing — **does NOT add Companion service** in this path because Companion port is dynamic and guessing it causes `ConnectionFailedError` with stale credentials
+  - `pyatv.scan(hosts=[ip])` cannot cross subnets (returns empty); the /info HTTP fetch does work cross-subnet via OS TCP routing
+- uvicorn runs with `reload=False` — `reload=True` causes watchfiles to detect `known_devices.json` writes during startup and kill in-progress connections
 
 ### Kaleidescape
 - TCP Control Protocol on port 10000
@@ -68,6 +73,7 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - Loaded at startup: pre-populates `latest_statuses` and `device_rooms` with offline entries so devices appear immediately
 - Written whenever a new device connects (`_connect_conf`) — preserves existing `room` field
 - Forget device: `DELETE /api/devices/{id}` removes from known list, credentials, clients, statuses, `device_rooms`, and strips IP from `EXTRA_HOSTS`/`KALEIDESCAPE_HOSTS` in `.env`
+- **Device identifier keys are always MAC addresses** (e.g. `7E:8F:CF:5C:4D:71`) for Apple TVs, `kaleidescape-{ip}` for Kaleidescape — UUID keys in `known_devices.json` indicate a stale/buggy entry from an old `_probe_extra_host` bug and should be removed
 
 ## Room concept
 - Each device can be assigned to a named room (string, e.g. `"Theater"`, `"Living Room"`)

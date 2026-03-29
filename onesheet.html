@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>What's Playing? — Feature Overview</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0a0c0e;
+      --surface:  #13171c;
+      --border:   rgba(255,255,255,0.08);
+      --text:     #e8eaed;
+      --muted:    #8a9ab0;
+      --green:    #6ee7b7;
+      --teal:     #38bdf8;
+      --accent:   #84cc16;
+      --accent2:  #4ade80;
+      --kscape:   #c084fc;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 48px 24px 72px;
+    }
+
+    .page {
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      margin-bottom: 8px;
+    }
+
+    .logo-mark {
+      flex-shrink: 0;
+      width: 64px;
+      height: 64px;
+    }
+
+    .header-text h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--teal) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header-text p {
+      margin-top: 4px;
+      font-size: 1.05rem;
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 32px 0;
+    }
+
+    /* ── Lead ── */
+    .lead {
+      font-size: 1.1rem;
+      line-height: 1.75;
+      color: #c4cdd8;
+      max-width: 700px;
+      margin-bottom: 40px;
+    }
+
+    /* ── Section headings ── */
+    h2 {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+
+    /* ── Feature grid ── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 40px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 22px;
+    }
+
+    .card-icon {
+      font-size: 1.5rem;
+      margin-bottom: 10px;
+      line-height: 1;
+    }
+
+    .card h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+
+    .card p {
+      font-size: 0.85rem;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    .card.accent  { border-color: rgba(132, 204, 22,  0.25); }
+    .card.teal    { border-color: rgba(56,  189, 248, 0.25); }
+    .card.purple  { border-color: rgba(192, 132, 252, 0.25); }
+    .card.green   { border-color: rgba(110, 231, 183, 0.25); }
+
+    /* ── Devices section ── */
+    .devices {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+    }
+
+    .device-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 8px 18px 8px 12px;
+      font-size: 0.88rem;
+      color: var(--text);
+    }
+
+    .device-pill .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── Two-col layout ── */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 40px;
+    }
+
+    @media (max-width: 600px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+
+    .list-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 22px;
+    }
+
+    .list-card h3 {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+    }
+
+    .list-card ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .list-card li {
+      font-size: 0.87rem;
+      color: #c4cdd8;
+      display: flex;
+      gap: 8px;
+      line-height: 1.45;
+    }
+
+    .list-card li::before {
+      content: '›';
+      color: var(--accent);
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    /* ── Kiosk highlight ── */
+    .kiosk-block {
+      background: linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(132,204,22,0.07) 100%);
+      border: 1px solid rgba(56,189,248,0.2);
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 40px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .kiosk-block h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .kiosk-block p {
+      font-size: 0.87rem;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .kiosk-badge {
+      background: rgba(56,189,248,0.15);
+      border: 1px solid rgba(56,189,248,0.3);
+      color: var(--teal);
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      white-space: nowrap;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Tech stack ── */
+    .tech-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 40px;
+    }
+
+    .tag {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 16px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      font-size: 0.8rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <svg class="logo-mark" viewBox="0 0 64 64" fill="none">
+      <!-- Geometric play icon matching favicon -->
+      <rect width="64" height="64" rx="14" fill="#111"/>
+      <polygon points="12,10 52,32 12,54" fill="url(#g1)" opacity="0.15"/>
+      <!-- Faceted play mark -->
+      <polygon points="14,14 34,22 14,32"  fill="url(#g1)"/>
+      <polygon points="14,32 34,22 34,42"  fill="url(#g2)"/>
+      <polygon points="14,32 34,42 14,50"  fill="url(#g1)" opacity="0.7"/>
+      <polygon points="34,22 50,32 34,42"  fill="url(#g2)" opacity="0.85"/>
+      <defs>
+        <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%"   stop-color="#38bdf8"/>
+          <stop offset="100%" stop-color="#84cc16"/>
+        </linearGradient>
+        <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%"   stop-color="#84cc16"/>
+          <stop offset="100%" stop-color="#4ade80"/>
+        </linearGradient>
+      </defs>
+    </svg>
+    <div class="header-text">
+      <h1>What's Playing?</h1>
+      <p>Home theater now-playing monitor &amp; remote control</p>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Lead -->
+  <p class="lead">
+    A whole-home dashboard that shows what's playing on every Apple TV and Kaleidescape
+    player in real time — album art, title, progress, transport controls, and remote — all
+    in a single browser tab, with no polling lag thanks to WebSocket push updates.
+  </p>
+
+  <!-- Supported devices -->
+  <h2>Supported Devices</h2>
+  <div class="devices">
+    <div class="device-pill"><span class="dot" style="background:#38bdf8"></span> Apple TV 4K (all generations)</div>
+    <div class="device-pill"><span class="dot" style="background:#84cc16"></span> Apple TV HD</div>
+    <div class="device-pill"><span class="dot" style="background:var(--kscape)"></span> Kaleidescape Strato / Terra</div>
+  </div>
+
+  <!-- Core features -->
+  <h2>Core Features</h2>
+  <div class="grid">
+
+    <div class="card accent">
+      <div class="card-icon">🎬</div>
+      <h3>Live Now-Playing Cards</h3>
+      <p>Per-device cards display title, artist/album, series &amp; episode, progress bar with elapsed/remaining time, and a blurred album-art background that updates instantly via push subscription.</p>
+    </div>
+
+    <div class="card teal">
+      <div class="card-icon">🖼</div>
+      <h3>Poster Art from TMDB</h3>
+      <p>Movie and TV show posters fetched automatically from The Movie Database. For TV shows, season-specific art is resolved — even when the device doesn't report a season number — by matching the episode title against all seasons in parallel.</p>
+    </div>
+
+    <div class="card green">
+      <div class="card-icon">🎮</div>
+      <h3>Transport Controls</h3>
+      <p>Play/pause, skip forward/back, and scrub to any position directly from the card. Kaleidescape shows variable-speed scan and chapter navigation instead of fixed-seek buttons.</p>
+    </div>
+
+    <div class="card teal">
+      <div class="card-icon">📱</div>
+      <h3>Full Remote Control</h3>
+      <p>Tap the remote icon to open a Siri Remote–style overlay: D-pad, select, menu, back, home, play/pause, and title/chapter navigation — all without leaving the browser.</p>
+    </div>
+
+    <div class="card accent">
+      <div class="card-icon">⚡</div>
+      <h3>WebSocket Push Updates</h3>
+      <p>The backend maintains persistent connections to every device. State changes arrive in the browser within the poll interval (default 5 s) with no manual refresh required.</p>
+    </div>
+
+    <div class="card green">
+      <div class="card-icon">🔍</div>
+      <h3>Auto-Discovery</h3>
+      <p>Devices are found automatically via mDNS on the local network. Apple TVs on other subnets can be added by IP; they connect via AirPlay even when mDNS can't reach them.</p>
+    </div>
+
+    <div class="card purple">
+      <div class="card-icon">🔌</div>
+      <h3>Persistent Connections</h3>
+      <p>Devices that go offline are retained and reconnected automatically on the next scan cycle. Known devices load immediately on startup so the UI is never blank.</p>
+    </div>
+
+    <div class="card accent">
+      <div class="card-icon">📌</div>
+      <h3>Device Pinning</h3>
+      <p>Pin a device's IP so it reconnects directly by TCP even if mDNS goes silent — useful for Apple TVs across VLANs or when Bonjour proxy coverage is incomplete.</p>
+    </div>
+
+  </div>
+
+  <!-- Kiosk mode -->
+  <div class="kiosk-block">
+    <div>
+      <h3>Kiosk Mode</h3>
+      <p>
+        Turn any browser tab into a dedicated now-playing display. Bind it to a specific device, a
+        room (auto-switches to whatever is active), or the whole network. Supports both landscape and
+        portrait orientations (90° CSS rotation) — ideal for a wall-mounted tablet, a rack-mount
+        touchscreen, or a Raspberry Pi display. When nothing is playing the screen goes dark
+        automatically. Configurable per connected client from the Settings panel.
+      </p>
+    </div>
+    <div class="kiosk-badge">Kiosk Mode</div>
+  </div>
+
+  <!-- Settings & management -->
+  <h2>Settings &amp; Management</h2>
+  <div class="two-col">
+
+    <div class="list-card">
+      <h3>Device Management</h3>
+      <ul>
+        <li>Add any Apple TV or Kaleidescape by IP address</li>
+        <li>Assign devices to named rooms (Theater, Living Room, etc.)</li>
+        <li>Pin / unpin devices for reliable cross-subnet reconnection</li>
+        <li>Hide devices from the dashboard without removing them</li>
+        <li>Forget a device entirely, removing credentials and config</li>
+      </ul>
+    </div>
+
+    <div class="list-card">
+      <h3>Pairing</h3>
+      <ul>
+        <li>Pair AirPlay and Companion protocols independently</li>
+        <li>Re-pair individual protocols without disturbing others</li>
+        <li>"Forget &amp; Re-pair All" for a clean credential reset</li>
+        <li>Paired/unpaired status shown per protocol</li>
+        <li>Unpaired devices optionally hidden from main view</li>
+      </ul>
+    </div>
+
+    <div class="list-card">
+      <h3>Kiosk Configuration</h3>
+      <ul>
+        <li>Enable/disable kiosk per browser client</li>
+        <li>Landscape or portrait orientation</li>
+        <li>Bind to specific device, room, or "any active"</li>
+        <li>Room binding auto-selects playing over paused</li>
+        <li>Managed remotely from any connected session</li>
+      </ul>
+    </div>
+
+    <div class="list-card">
+      <h3>Developer Tools</h3>
+      <ul>
+        <li>Debug panel: live log of commands sent and WebSocket messages received</li>
+        <li>Trigger an immediate mDNS rescan on demand</li>
+        <li>Server restart with two-step confirm (auto-relaunched by launchctl)</li>
+        <li>All settings persisted — survive server restarts</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- Tech stack -->
+  <h2>Technology</h2>
+  <div class="tech-row">
+    <span class="tag">Python 3.12</span>
+    <span class="tag">FastAPI</span>
+    <span class="tag">uvicorn</span>
+    <span class="tag">pyatv</span>
+    <span class="tag">WebSocket</span>
+    <span class="tag">React 18</span>
+    <span class="tag">TypeScript</span>
+    <span class="tag">Vite</span>
+    <span class="tag">Tailwind CSS</span>
+    <span class="tag">TMDB API</span>
+    <span class="tag">mDNS / Bonjour</span>
+    <span class="tag">AirPlay</span>
+    <span class="tag">Kaleidescape TCP</span>
+    <span class="tag">macOS / launchctl</span>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>What's Playing? — Home Theater Monitor</span>
+    <span>Single-page app · Port 8000 · WebSocket push · Self-hosted</span>
+  </div>
+
+</div>
+</body>
+</html>
