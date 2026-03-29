@@ -199,6 +199,8 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
     setRemovingDevice(s => ({ ...s, [identifier]: true }));
     try {
       await fetch(`/api/devices/${encodeURIComponent(identifier)}`, { method: 'DELETE' });
+      // Also hide so mDNS rediscovery doesn't bring it back immediately
+      await fetch(`/api/devices/${encodeURIComponent(identifier)}/ignore`, { method: 'POST' });
       refreshConfigHosts();
     } finally {
       setRemovingDevice(s => ({ ...s, [identifier]: false }));
@@ -334,7 +336,7 @@ export function AdminModal({ devices, showUnpaired, onShowUnpairedChange, onTrig
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <input
                 type="text"
-                placeholder="192.168.1.100"
+                placeholder="192.168.1.100 or hostname"
                 value={newHostIp}
                 onChange={e => { setNewHostIp(e.target.value); setAddHostError(null); }}
                 onKeyDown={e => { if (e.key === 'Enter') addHost(); }}

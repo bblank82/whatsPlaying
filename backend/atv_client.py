@@ -180,6 +180,7 @@ class DeviceClient(PushListener):
 
         except Exception as exc:
             logger.debug("Status fetch failed for %s: %s", self.name, exc)
+            self._connected = False
             base["connected"] = False
 
         return base

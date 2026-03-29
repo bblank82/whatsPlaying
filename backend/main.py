@@ -9,6 +9,7 @@ import plistlib
 import random
 import re
 import signal
+import socket as _socket
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -224,7 +225,6 @@ def _offline_status(info: dict) -> dict:
         "room": info.get("room"),
         "connected": False,
         "paired": bool(get_for_device(identifier)),
-        "pinned": addr in EXTRA_HOSTS,
         "power": None,
         "now_playing": None,
     }
@@ -287,7 +287,7 @@ class PairFinishRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 async def _connect_conf(conf, cred_id: Optional[str] = None) -> None:
-    """Connect a device config if not already connected."""
+    """Connect a device config if not already connected, or reconnect if disconnected."""
     ident = conf.identifier
     if ident in IGNORED_DEVICES:
         return
@@ -298,6 +298,11 @@ async def _connect_conf(conf, cred_id: Optional[str] = None) -> None:
         await client.connect()
         # Persist so the device survives restarts even when offline
         _register_known_device(await client.get_status())
+    elif not clients[ident]._connected:
+        client = clients[ident]
+        logger.info("Reconnecting to %s (%s)", client.name, ident)
+        await client.disconnect()
+        await client.connect()
 
 
 async def discovery_loop():
@@ -360,7 +365,6 @@ async def polling_loop():
             status["room"] = device_rooms.get(client.identifier)
             cid = client.cred_id if hasattr(client, "cred_id") else client.identifier
             status["paired"] = bool(get_for_device(cid)) if not isinstance(client, KaleidescapeClient) else True
-            status["pinned"] = status.get("address", "") in EXTRA_HOSTS
             latest_statuses[client.identifier] = status
             statuses.append(status)
 
@@ -997,12 +1001,19 @@ async def get_config_hosts():
 
 @app.post("/api/config/hosts")
 async def add_config_host(body: AddHostBody):
-    """Add a device by IP to EXTRA_HOSTS or KALEIDESCAPE_HOSTS and connect it immediately."""
-    ip = body.ip.strip()
+    """Add a device by IP or hostname to EXTRA_HOSTS or KALEIDESCAPE_HOSTS and connect it immediately."""
+    host = body.ip.strip()
+    # Resolve hostname to IP if needed
     try:
-        ipaddress.ip_address(ip)
+        ipaddress.ip_address(host)
+        ip = host
     except ValueError:
-        return {"error": f"Invalid IP address: {ip}"}
+        try:
+            loop = asyncio.get_running_loop()
+            results = await loop.run_in_executor(None, lambda: _socket.getaddrinfo(host, None, _socket.AF_INET))
+            ip = results[0][4][0]
+        except Exception:
+            return {"error": f"Could not resolve hostname: {host}"}
 
     if body.host_type == "appletv":
         if ip not in EXTRA_HOSTS:
@@ -1062,43 +1073,7 @@ async def unignore_device(identifier: str):
     return {"success": True}
 
 
-def _get_device_ip(identifier: str) -> Optional[str]:
-    """Return the IP address for a device from status cache or active client."""
-    status = latest_statuses.get(identifier)
-    if status:
-        ip = status.get("address") or None
-        if ip:
-            return ip
-    client_obj = clients.get(identifier)
-    if client_obj and hasattr(client_obj, "conf"):
-        return str(client_obj.conf.address)
-    return None
 
-
-@app.post("/api/devices/{identifier}/pin")
-async def pin_device(identifier: str):
-    """Add this device's IP to EXTRA_HOSTS so it reconnects even without mDNS."""
-    ip = _get_device_ip(identifier)
-    if not ip:
-        return {"error": "Cannot determine device IP"}
-    if ip not in EXTRA_HOSTS:
-        EXTRA_HOSTS.append(ip)
-        _save_runtime_config()
-    if identifier in latest_statuses:
-        latest_statuses[identifier]["pinned"] = True
-    return {"success": True}
-
-
-@app.delete("/api/devices/{identifier}/pin")
-async def unpin_device(identifier: str):
-    """Remove this device's IP from EXTRA_HOSTS (still discovered via mDNS if reachable)."""
-    ip = _get_device_ip(identifier)
-    if ip and ip in EXTRA_HOSTS:
-        EXTRA_HOSTS.remove(ip)
-        _save_runtime_config()
-    if identifier in latest_statuses:
-        latest_statuses[identifier]["pinned"] = False
-    return {"success": True}
 
 
 
@@ -1308,7 +1283,6 @@ async def websocket_endpoint(websocket: WebSocket):
     _ip_to_client_id[client_ip] = client_id
 
     # Resolve hostname for display
-    import socket as _socket
     try:
         hostname = _socket.gethostbyaddr(client_ip)[0]
     except Exception:

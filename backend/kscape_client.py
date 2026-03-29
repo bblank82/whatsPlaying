@@ -11,11 +11,6 @@ import re
 import socket
 from typing import Optional
 
-try:
-    import httpx
-    _HTTPX_AVAILABLE = True
-except ImportError:
-    _HTTPX_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -94,35 +89,8 @@ class KaleidescapeClient:
     # ------------------------------------------------------------------
 
     async def _fetch_friendly_name(self):
-        """Scrape the Kaleidescape web UI to get the configured device name."""
-        if not _HTTPX_AVAILABLE:
-            return
-        try:
-            # asyncio's DNS resolver doesn't support mDNS; pre-resolve via socket
-            loop = asyncio.get_event_loop()
-            infos = await loop.run_in_executor(
-                None, lambda: socket.getaddrinfo("my-kaleidescape.local.", 80, socket.AF_INET)
-            )
-            server_ip = infos[0][4][0]
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(
-                    f"http://{server_ip}/components",
-                    headers={"Host": "my-kaleidescape.local."},
-                )
-                html = resp.text
-            blocks = re.split(r'<div class="component_container', html)
-            for block in blocks:
-                ip_match = re.search(
-                    r'<td class="data_value">\s*' + re.escape(self.address) + r'\s*</td>', block
-                )
-                if ip_match:
-                    name_match = re.search(r'friendly_name[^>]+value="([^"]+)"', block)
-                    if name_match and name_match.group(1).strip():
-                        self.name = f"{name_match.group(1).strip()} (Kaleidescape)"
-                        logger.info("Kaleidescape friendly name: %s", self.name)
-                    break
-        except Exception as exc:
-            logger.debug("Could not fetch Kaleidescape friendly name: %s", exc)
+        """Request the device's friendly name via GET_FRIENDLY_NAME TCP command."""
+        await self._send_raw("GET_FRIENDLY_NAME")
 
     async def connect(self) -> bool:
         try:
@@ -282,7 +250,12 @@ class KaleidescapeClient:
         raw = re.sub(r":/\d+$", "", m.group(2) or "")
         fields = [f for f in raw.split(":") if f != ""]
 
-        if status_name == "DEVICE_INFO":
+        if status_name == "FRIENDLY_NAME":
+            if fields and fields[0].strip():
+                self.name = f"{fields[0].strip()} (Kaleidescape)"
+                logger.info("Kaleidescape friendly name: %s", self.name)
+
+        elif status_name == "DEVICE_INFO":
             self._parse_device_info(fields)
 
         elif status_name == "PLAY_STATUS":

@@ -37,7 +37,7 @@ cd backend && source .venv/bin/activate && python main.py
 - TCP Control Protocol on port 10000
 - Client: `backend/kscape_client.py` (`KaleidescapeClient`)
 - Configured via `KALEIDESCAPE_HOSTS` list in `backend/whatsplaying_config.json` (migrated from `.env` on first run)
-- Friendly name scraped from `http://my-kaleidescape.local./components` on connect; mDNS resolved via `socket.getaddrinfo` (asyncio DNS doesn't support mDNS) before passing to httpx
+- Friendly name fetched via `GET_FRIENDLY_NAME` TCP command on connect; response parsed as `FRIENDLY_NAME` event
 - Device name format: `"{friendly_name} (Kaleidescape)"` e.g. `"Theater (Kaleidescape)"`
 - Identifier is always IP-based (`kaleidescape-{ip}`) — do NOT change `self.identifier` after init or control calls will break (clients dict key mismatch)
 - Discovery loop must skip `KaleidescapeClient` instances (`isinstance` guard)
@@ -89,12 +89,6 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - `IGNORED_DEVICES` (list in `whatsplaying_config.json`) — devices in this list are skipped by `_connect_conf` and the Kaleidescape startup loop; they remain in `known_devices.json` so they can be un-hidden from Settings
 - Hide/unhide: `POST /api/devices/{id}/ignore` / `DELETE /api/devices/{id}/ignore`
 
-## Device pinning
-- **Pin** = add device's IP to `EXTRA_HOSTS` — device reconnects by direct TCP probe even without mDNS (useful when moving networks)
-- **Unpin** = remove from `EXTRA_HOSTS` — device still appears if mDNS discovers it
-- Pin state is injected as `pinned: bool` into every device status in the polling loop
-- `POST /api/devices/{id}/pin` and `DELETE /api/devices/{id}/pin` — update `EXTRA_HOSTS` in `whatsplaying_config.json` immediately
-- Pin icon (location pin) on DeviceCard header — filled/blue when pinned; only shown for Apple TVs (Kaleidescape is always manual)
 
 ## Kiosk mode
 - Managed remotely via Settings panel (gear icon, upper-left)

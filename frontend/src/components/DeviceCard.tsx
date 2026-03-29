@@ -170,17 +170,6 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
   const isKaleidescape = device_type === 'kaleidescape';
   const isOn = power?.toLowerCase().includes('on');
 
-  // Pin state — optimistic, synced from device.pinned
-  const [pinned, setPinned] = useState(device.pinned ?? false);
-  useEffect(() => { setPinned(device.pinned ?? false); }, [device.pinned]);
-  async function togglePin() {
-    const next = !pinned;
-    setPinned(next);
-    await fetch(`/api/devices/${encodeURIComponent(identifier)}/pin`, {
-      method: next ? 'POST' : 'DELETE',
-    });
-  }
-
   // Optimistic playback state
   const [optimistic, setOptimistic] = useState<{ deviceState?: string; positionDelta?: number } | null>(null);
   useEffect(() => { setOptimistic(null); }, [now_playing?.device_state, now_playing?.position]);
@@ -407,32 +396,6 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
 
           {/* Right controls */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
-            {/* Pin button — Apple TVs only, always visible */}
-            {!isKaleidescape && (
-              <button
-                onClick={togglePin}
-                title={pinned ? 'Unpin (remove from EXTRA_HOSTS)' : 'Pin (add to EXTRA_HOSTS for cross-network reconnect)'}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-                  color: pinned ? '#0A84FF' : 'rgba(255,255,255,0.2)',
-                  filter: pinned ? 'drop-shadow(0 0 4px rgba(10,132,255,0.5))' : 'none',
-                  transition: 'color 0.2s, filter 0.2s',
-                }}
-              >
-                <svg width="11" height="14" viewBox="0 0 22 28" fill="none">
-                  <path
-                    d="M11 1C7.13 1 4 4.13 4 8c0 5.5 7 19 7 19s7-13.5 7-19c0-3.87-3.13-7-7-7z"
-                    fill={pinned ? '#0A84FF' : 'none'}
-                    stroke={pinned ? '#0A84FF' : 'rgba(255,255,255,0.3)'}
-                    strokeWidth="2" strokeLinejoin="round"
-                  />
-                  <circle cx="11" cy="8" r="2.8"
-                    fill={pinned ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.25)'}
-                  />
-                </svg>
-              </button>
-            )}
             {/* Pair button — Apple TVs only, only when connected */}
             {connected && !isKaleidescape && (
               <button

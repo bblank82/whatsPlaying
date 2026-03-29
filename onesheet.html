@@ -361,19 +361,13 @@
     <div class="card green">
       <div class="card-icon">🔍</div>
       <h3>Auto-Discovery</h3>
-      <p>Devices are found automatically via mDNS on the local network. Apple TVs on other subnets can be added by IP; they connect via AirPlay even when mDNS can't reach them.</p>
+      <p>Devices are found automatically via mDNS on the local network. Apple TVs on other subnets can be added by IP or hostname and connected directly via AirPlay.</p>
     </div>
 
     <div class="card purple">
       <div class="card-icon">🔌</div>
       <h3>Persistent Connections</h3>
       <p>Devices that go offline are retained and reconnected automatically on the next scan cycle. Known devices load immediately on startup so the UI is never blank.</p>
-    </div>
-
-    <div class="card accent">
-      <div class="card-icon">📌</div>
-      <h3>Device Pinning</h3>
-      <p>Pin a device's IP so it reconnects directly by TCP even if mDNS goes silent — useful for Apple TVs across VLANs or when Bonjour proxy coverage is incomplete.</p>
     </div>
 
   </div>
@@ -400,9 +394,8 @@
     <div class="list-card">
       <h3>Device Management</h3>
       <ul>
-        <li>Add any Apple TV or Kaleidescape by IP address</li>
+        <li>Add any Apple TV or Kaleidescape by IP address or hostname</li>
         <li>Assign devices to named rooms (Theater, Living Room, etc.)</li>
-        <li>Pin / unpin devices for reliable cross-subnet reconnection</li>
         <li>Hide devices from the dashboard without removing them</li>
         <li>Forget a device entirely, removing credentials and config</li>
       </ul>
@@ -445,7 +438,7 @@
   <!-- Tech stack -->
   <h2>Technology</h2>
   <div class="tech-row">
-    <span class="tag">Python 3.12</span>
+    <span class="tag">Python 3.9+</span>
     <span class="tag">FastAPI</span>
     <span class="tag">uvicorn</span>
     <span class="tag">pyatv</span>
