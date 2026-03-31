@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useDevices } from './hooks/useDevices';
+import { useDemoDevices } from './demo/useDemoDevices';
 import { DeviceCard } from './components/DeviceCard';
 import { PairModal } from './components/PairModal';
 import { AdminModal } from './components/AdminModal';
+import { CinematicKioskView } from './components/CinematicKioskView';
 import { DebugContext, type LogEntry } from './contexts/debug';
+
+const isDemo = new URLSearchParams(window.location.search).has('demo');
 
 export default function App() {
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('debugMode') === 'true');
@@ -20,7 +24,13 @@ export default function App() {
     setDebugEntries(prev => [...prev.slice(-299), { id: debugIdRef.current++, ts, direction, device, message }]);
   };
 
-  const { devices, connected, triggerScan, kioskConfig } = useDevices(logRef);
+  const { devices: realDevices, connected: realConnected, triggerScan, kioskConfig } = useDevices(logRef, !isDemo);
+  const demoDeviceList = useDemoDevices();
+  const [demoKiosk, setDemoKiosk] = useState<{ id: string; orientation: 'landscape' | 'portrait' } | null>(null);
+
+  const devices = isDemo ? demoDeviceList : realDevices;
+  const connected = isDemo ? true : realConnected;
+
   const [pairingDevice, setPairingDevice] = useState<{ id: string; name: string; isConnected: boolean } | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
 
@@ -35,6 +45,7 @@ export default function App() {
   // Determine which device should be in kiosk mode on this host.
   // Priority: specific device_id > room_id (first active in room) > any active device
   function isKioskDevice(deviceId: string): boolean {
+    if (isDemo) return demoKiosk?.id === deviceId;
     if (!kioskConfig.kiosk) return false;
     if (kioskConfig.device_id) return kioskConfig.device_id === deviceId;
     const isActive = (d: (typeof devices)[0]) => {
@@ -75,30 +86,40 @@ export default function App() {
           <div style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             {/* Left: admin button + logo */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <button
-                onClick={() => setShowAdmin(true)}
-                title="Admin"
-                style={{
-                  width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-                  background: 'rgba(255,255,255,0.09)',
-                  border: '1px solid rgba(255,255,255,0.14)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'pointer', color: 'rgba(255,255,255,0.6)',
-                }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="3"/>
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-                </svg>
-              </button>
+              {!isDemo && (
+                <button
+                  onClick={() => setShowAdmin(true)}
+                  title="Admin"
+                  style={{
+                    width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                    background: 'rgba(255,255,255,0.09)',
+                    border: '1px solid rgba(255,255,255,0.14)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', color: 'rgba(255,255,255,0.6)',
+                  }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                  </svg>
+                </button>
+              )}
               <img src="/logo.png" alt="What's Playing" style={{ height: 28, width: 'auto', display: 'block' }} />
+              {isDemo && (
+                <span style={{
+                  background: '#FF9F0A', color: '#000',
+                  fontSize: 10, fontWeight: 700,
+                  padding: '2px 7px', borderRadius: 5,
+                  letterSpacing: '0.07em', textTransform: 'uppercase',
+                }}>Demo</span>
+              )}
             </div>
 
             {/* Right side */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? '#30D158' : '#FF453A', boxShadow: connected ? '0 0 6px #30D158' : 'none' }} />
+              {!isDemo && <div style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? '#30D158' : '#FF453A', boxShadow: connected ? '0 0 6px #30D158' : 'none' }} />}
               <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)' }}>
-                {connected ? `${onlineCount} of ${devices.length} online` : 'Disconnected'}
+                {isDemo ? `${devices.length} demo devices` : connected ? `${onlineCount} of ${devices.length} online` : 'Disconnected'}
               </span>
             </div>
           </div>
@@ -128,13 +149,47 @@ export default function App() {
                   if (connDiff !== 0) return connDiff;
                   return a.name.localeCompare(b.name);
                 }).map(device => (
-                <DeviceCard
-                  key={device.identifier}
-                  device={device}
-                  onPair={handlePair}
-                  kioskActive={isKioskDevice(device.identifier)}
-                  kioskOrientation={kioskConfig.orientation}
-                />
+                <div key={device.identifier} style={{ position: 'relative' }}>
+                  <DeviceCard device={device} onPair={handlePair} />
+                  {isDemo && (
+                    <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', gap: 5, zIndex: 5 }}>
+                      <button
+                        onClick={() => setDemoKiosk({ id: device.identifier, orientation: 'landscape' })}
+                        title="Kiosk view — landscape"
+                        style={{
+                          background: 'rgba(0,0,0,0.65)',
+                          border: '1px solid rgba(255,255,255,0.18)',
+                          borderRadius: 7, color: 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                          padding: '4px 10px',
+                          display: 'flex', alignItems: 'center', gap: 5,
+                        }}
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                        </svg>
+                        Kiosk
+                      </button>
+                      <button
+                        onClick={() => setDemoKiosk({ id: device.identifier, orientation: 'portrait' })}
+                        title="Kiosk view — portrait"
+                        style={{
+                          background: 'rgba(0,0,0,0.65)',
+                          border: '1px solid rgba(255,255,255,0.18)',
+                          borderRadius: 7, color: 'rgba(255,255,255,0.75)',
+                          cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                          padding: '4px 10px',
+                          display: 'flex', alignItems: 'center', gap: 5,
+                        }}
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                        </svg>
+                        Kiosk ↕
+                      </button>
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -173,6 +228,40 @@ export default function App() {
         {kioskConfig.kiosk && !kioskHasContent && (
           <KioskBlackScreen orientation={kioskConfig.orientation} />
         )}
+
+        {/* Cinematic kiosk — demo and production */}
+        {(() => {
+          let kioskDevice = null;
+          let orientation: 'landscape' | 'portrait' = 'landscape';
+          let kioskActive = false;
+
+          if (isDemo && demoKiosk) {
+            kioskDevice = devices.find(d => d.identifier === demoKiosk.id) ?? null;
+            orientation = demoKiosk.orientation;
+          } else if (!isDemo && kioskConfig.kiosk && kioskHasContent) {
+            kioskDevice = devices.find(d => isKioskDevice(d.identifier)) ?? null;
+            orientation = kioskConfig.orientation;
+            kioskActive = true;
+          }
+
+          if (!kioskDevice) return null;
+          const np = kioskDevice.now_playing;
+          const effectiveSeries = np?.series_name ?? null;
+          const lookupTitle = effectiveSeries ?? np?.title ?? null;
+          const mediaType: 'movie' | 'show' = effectiveSeries ? 'show' : 'movie';
+          return (
+            <CinematicKioskView
+              deviceName={kioskDevice.name}
+              nowPlaying={np}
+              lookupTitle={lookupTitle}
+              mediaType={mediaType}
+              effectiveSeries={effectiveSeries}
+              orientation={orientation}
+              kioskActive={kioskActive}
+              onClose={() => { if (isDemo) setDemoKiosk(null); }}
+            />
+          );
+        })()}
       </div>
     </DebugContext.Provider>
   );

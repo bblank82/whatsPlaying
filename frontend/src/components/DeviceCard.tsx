@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { DeviceStatus } from '../types';
 import { NowPlaying } from './NowPlaying';
 import { RemoteModal } from './RemoteModal';
-import { ArtworkModal } from './ArtworkModal';
+import { CinematicKioskView } from './CinematicKioskView';
 import { parseHuluTitle, parsePlexTitle, detectPlexSeries, isGenericVideoTitle, ARTIST_AS_SERIES_APP_IDS, YOUTUBE_APP_IDS } from '../utils';
 import { useDebug } from '../contexts/debug';
 
@@ -160,11 +160,9 @@ function ScoresRow({ scores }: { scores: ScoreState }) {
 interface Props {
   device: DeviceStatus;
   onPair: (id: string) => void;
-  kioskActive?: boolean;
-  kioskOrientation?: 'landscape' | 'portrait';
 }
 
-export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientation = 'landscape' }: Props) {
+export function DeviceCard({ device, onPair }: Props) {
   const { identifier, name, hostname, model, device_type, connected, paired, power, now_playing } = device;
   const debug = useDebug();
   const isKaleidescape = device_type === 'kaleidescape';
@@ -589,16 +587,16 @@ export function DeviceCard({ device, onPair, kioskActive = false, kioskOrientati
       {showRemote && (
         <RemoteModal deviceId={identifier} deviceName={name} deviceType={device_type} onClose={() => setShowRemote(false)} />
       )}
-      {(showArtwork || (kioskActive && artworkFullscreenSrc)) && artworkFullscreenSrc && (
-        <ArtworkModal
-          src={artworkFullscreenSrc}
-          nowPlaying={effectiveNowPlaying ?? null}
-          effectiveSeries={effectiveSeries}
-          scores={scores}
+      {showArtwork && (
+        <CinematicKioskView
           deviceName={name}
-          orientation={kioskActive ? kioskOrientation : 'landscape'}
-          kioskActive={kioskActive}
-          onClose={() => { if (!kioskActive) setShowArtwork(false); }}
+          nowPlaying={effectiveNowPlaying ?? null}
+          lookupTitle={lookupTitle}
+          mediaType={mediaTypeForApi}
+          effectiveSeries={effectiveSeries}
+          orientation="landscape"
+          kioskActive={false}
+          onClose={() => setShowArtwork(false)}
         />
       )}
     </>

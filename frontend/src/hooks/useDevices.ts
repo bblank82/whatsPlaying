@@ -14,7 +14,7 @@ export interface KioskConfig {
   room_id: string | null;
 }
 
-export function useDevices(logRef?: MutableRefObject<LogFn>) {
+export function useDevices(logRef?: MutableRefObject<LogFn>, enabled = true) {
   const [devices, setDevices] = useState<DeviceStatus[]>([]);
   const [connected, setConnected] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
@@ -30,6 +30,7 @@ export function useDevices(logRef?: MutableRefObject<LogFn>) {
   }, [kioskConfig.kiosk]);
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
 
     function connect() {
@@ -79,7 +80,7 @@ export function useDevices(logRef?: MutableRefObject<LogFn>) {
       if (timerRef.current) clearTimeout(timerRef.current);
       wsRef.current?.close();
     };
-  }, []);
+  }, [enabled]);
 
   async function triggerScan() {
     await fetch('/api/scan', { method: 'POST' });

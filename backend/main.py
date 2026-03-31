@@ -893,6 +893,81 @@ async def get_tmdb(title: str, media_type: str = "movie", force_media_type: bool
     return {"available": False}
 
 
+@app.get("/api/tmdb/details")
+async def get_tmdb_details(title: str, media_type: str = "movie", force_media_type: bool = False,
+                           season_number: Optional[int] = None, episode_number: Optional[int] = None):
+    """Return rich TMDB metadata: overview, cast, genres, year, runtime, backdrop.
+
+    For TV shows, if season_number and episode_number are provided, fetches the
+    episode-specific overview and falls back to the series overview if absent.
+    """
+    if not TMDB_API_KEY:
+        return {"available": False}
+    title = _clean_title(title)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            kind, tmdb_id, _imdb_id, _year = await _tmdb_best(client, title, media_type, force_hint=force_media_type)
+            if not tmdb_id:
+                return {"available": False}
+
+            detail = await client.get(
+                f"https://api.themoviedb.org/3/{kind}/{tmdb_id}",
+                params={"api_key": TMDB_API_KEY, "append_to_response": "credits"},
+            )
+            d = detail.json()
+
+            date_field = d.get("release_date") or d.get("first_air_date") or ""
+            year = int(date_field[:4]) if len(date_field) >= 4 else None
+            runtime = d.get("runtime") or next(iter(d.get("episode_run_time") or []), None)
+
+            cast_raw = d.get("credits", {}).get("cast", [])[:6]
+            cast = [
+                {
+                    "name": c["name"],
+                    "character": c.get("character", ""),
+                    "profile_url": f"https://image.tmdb.org/t/p/w185{c['profile_path']}" if c.get("profile_path") else None,
+                }
+                for c in cast_raw
+            ]
+
+            genres = [g["name"] for g in d.get("genres", [])[:3]]
+            poster = d.get("poster_path")
+            backdrop = d.get("backdrop_path")
+            vote = d.get("vote_average")
+            overview = d.get("overview")
+
+            # For TV episodes, prefer the episode-specific overview
+            if kind == "tv" and season_number is not None and episode_number is not None:
+                try:
+                    ep_resp = await client.get(
+                        f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}/episode/{episode_number}",
+                        params={"api_key": TMDB_API_KEY},
+                    )
+                    if ep_resp.status_code == 200:
+                        ep_overview = ep_resp.json().get("overview") or ""
+                        if ep_overview.strip():
+                            overview = ep_overview
+                except Exception as exc:
+                    logger.debug("TMDB episode overview fetch failed for %r s%se%s: %s", title, season_number, episode_number, exc)
+
+            return {
+                "available": True,
+                "overview": overview,
+                "tagline": d.get("tagline"),
+                "genres": genres,
+                "year": year,
+                "runtime": runtime,
+                "cast": cast,
+                "vote_average": round(vote, 1) if vote else None,
+                "poster_url": f"https://image.tmdb.org/t/p/w500{poster}" if poster else None,
+                "fullsize_url": f"https://image.tmdb.org/t/p/original{poster}" if poster else None,
+                "backdrop_url": f"https://image.tmdb.org/t/p/original{backdrop}" if backdrop else None,
+            }
+    except Exception as exc:
+        logger.debug("TMDB details lookup failed for %r: %s", title, exc)
+    return {"available": False}
+
+
 _YT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }

@@ -16,7 +16,7 @@ Home theater monitoring dashboard. Shows now-playing status, artwork, and remote
 ```bash
 ./start.sh          # build frontend + start backend (production)
 # or for backend-only restart (frontend already built):
-cd backend && source .venv/bin/activate && python main.py
+cd backend && .venv/bin/python3 main.py
 ```
 
 ## Devices supported
@@ -59,7 +59,7 @@ cd backend && source .venv/bin/activate && python main.py
 - `frontend/src/hooks/useDevices.ts` — WebSocket connection, device state, kiosk config (including `room_id`)
 - `frontend/src/contexts/debug.ts` — React context for routing log entries to the debug panel
 - `frontend/src/components/DeviceCard.tsx` — per-device card, artwork, transport controls
-- `frontend/src/components/ArtworkModal.tsx` — fullscreen artwork; click-to-close when not in kiosk mode
+- `frontend/src/components/CinematicKioskView.tsx` — fullscreen cinematic view; used for both kiosk mode and click-to-expand artwork
 - `frontend/src/components/AdminModal.tsx` — Settings panel: show-unpaired toggle, scan button, add/remove device by IP, room assignment, hidden devices, kiosk management, server restart, debug toggle
 - `frontend/src/components/RemoteModal.tsx` — navigation/transport remote (no volume buttons)
 - `frontend/src/components/PairModal.tsx` — shows all available protocols with paired/unpaired status; individual Pair/Re-pair per protocol; "Forget & Re-pair All" and "Forget Device"
@@ -156,6 +156,38 @@ OMDB_API_KEY=...
 cd frontend && npm run build   # outputs to frontend/dist/
 ```
 Backend serves `frontend/dist/` automatically — no config change needed after build.
+
+## Demo mode
+- Activated via URL param: `http://localhost:8000/?demo`
+- Entirely frontend-only — no WebSocket connection, no backend device APIs used
+- Shows two mock Apple TV devices with real movie/show metadata so TMDB posters and RT/IMDb scores load automatically:
+  - **Living Room** — Netflix — *Succession* S3E7, actively playing (position ticks every second)
+  - **Theater** — Plex — *The Dark Knight*, paused partway through
+- Header shows an amber **DEMO** badge; gear/admin button is hidden
+- Each card has a **Kiosk** (landscape) and **Kiosk ↕** (portrait) button that open `CinematicKioskView`
+- Demo kiosk overlays can be closed with Escape or by clicking anywhere (unlike real kiosk mode which is non-dismissible)
+- Implemented in `frontend/src/demo/useDemoDevices.ts`; wired into `App.tsx` via the `isDemo` flag; `useDevices` accepts an `enabled` param to skip the WebSocket when false
+- `DeviceCard` accepts an optional `onKioskClose` prop — when provided, the ArtworkModal becomes click-dismissible and calls the callback on close
+
+## Cinematic kiosk view
+- **The only kiosk view, and also the click-to-expand artwork view** — `frontend/src/components/CinematicKioskView.tsx`
+- `ArtworkModal` has been removed
+- Fetches rich metadata from `/api/tmdb/details` (overview, cast, genres, tagline, backdrop, year, runtime) and `/api/scores` independently
+- Props: `deviceName`, `nowPlaying`, `lookupTitle`, `mediaType`, `effectiveSeries`, `orientation` (`'landscape'` | `'portrait'`), `kioskActive` (false in demo, true in production — controls click-to-dismiss and cursor), `onClose`
+- Rendered at App level (not inside DeviceCard) — in demo via `demoKiosk` state; in production when `kioskConfig.kiosk && kioskHasContent`
+- **Backdrop**: blurred/darkened `<img>` element covering the full canvas (`filter: blur(40px) brightness(0.35) saturate(1.3)`, scaled 1.07×); uses backdrop URL falling back to poster
+- **Landscape layout**: flex row — contained poster with drop shadow (38% left), info panel (62% right)
+- **Portrait layout**: 58/42 absolute split using CSS coordinates (which are rotated 90° CW relative to the visual display):
+  - Poster section: `position: absolute, top: 0, height: 58%` → occupies visual **right** 58%
+  - Info panel: `position: absolute, bottom: 0, height: 42%` → occupies visual **left** 42%
+  - Info panel uses `justifyContent: flex-end` to pack content toward CSS bottom = **visual left edge** of screen
+  - CSS `top` maps to visual **right**; CSS `bottom` maps to visual **left** (counter-intuitive — see rotation note below)
+- **Portrait rotation note**: canvas has `width: 100vh; height: 100vw; transform: rotate(90deg)`. After 90° CW rotation in CSS Y-down coordinates: `visual_x = viewport_width - css_y`, `visual_y = css_x`. So CSS top→visual right, CSS bottom→visual left, CSS left→visual top, CSS right→visual bottom.
+- **Cast cards**: circular avatars with `objectPosition: top` cropping; falls back to initial letter on image error
+- **Live position tick**: same base-ref extrapolation as `DeviceCard` — 1s interval, 8s drift threshold
+- **Backend endpoint** `/api/tmdb/details`: accepts `title`, `media_type`, optional `season_number` + `episode_number`; returns `overview`, `tagline`, `genres`, `year`, `runtime`, `cast[]`, `poster_url`, `fullsize_url`, `backdrop_url`, `vote_average`
+  - For TV shows with `season_number` + `episode_number`, fetches episode-specific overview from `GET /tv/{id}/season/{s}/episode/{e}` and uses it in place of the series overview; falls back to series overview if the episode has none or the fetch fails
+  - Frontend passes `nowPlaying.season_number` and `nowPlaying.episode_number` when available; effect re-runs if either changes
 
 ## Testing
 ```bash
