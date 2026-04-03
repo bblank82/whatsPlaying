@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "concurrently --kill-others --names \"backend,frontend\" --prefix-colors \"cyan,magenta\" \"npm run backend\" \"npm run frontend\"",
-    "backend": "cd backend && source .venv/bin/activate && python main.py",
+    "backend": "cd backend && ./.venv/bin/python3 main.py",
     "frontend": "cd frontend && npm run dev"
   },
   "keywords": [],

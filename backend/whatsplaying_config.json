@@ -3,5 +3,6 @@
   "kaleidescape_hosts": [
     "192.168.75.214"
   ],
-  "ignored_devices": []
+  "ignored_devices": [],
+  "sony_hosts": []
 }

@@ -26,6 +26,17 @@ function DeviceIcon({ model, deviceType, name, dim }: { model: string; deviceTyp
     );
   }
 
+  if (deviceType === 'sony') {
+    return (
+      <svg width="42" height="42" viewBox="0 0 42 42" fill="none">
+        <rect x="4" y="16" width="34" height="10" rx="2" fill={c}/>
+        <rect x="6" y="22" width="4" height="1.5" rx="0.75" fill="rgba(0,0,0,0.2)"/>
+        <circle cx="32" cy="21" r="1.5" fill="rgba(0,0,0,0.2)"/>
+        <rect x="12" y="18" width="10" height="1" rx="0.5" fill="rgba(0,0,0,0.1)"/>
+      </svg>
+    );
+  }
+
   if (isATV) {
     return (
       <svg width="38" height="38" viewBox="0 0 38 38" fill="none">
@@ -175,7 +186,7 @@ export function DeviceCard({ device, onPair }: Props) {
   const effectiveDeviceState = optimistic?.deviceState ?? now_playing?.device_state ?? '';
   const isPlaying = effectiveDeviceState.toLowerCase().includes('playing');
   const isPaused  = effectiveDeviceState.toLowerCase().includes('paused');
-  const showControls = connected && (isPlaying || isPaused);
+  const showControls = connected && (isPlaying || isPaused || device_type === 'sony');
 
   // Device artwork URL
   const artworkCacheKey = now_playing?.artwork_id ?? now_playing?.title ?? null;

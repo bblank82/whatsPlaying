@@ -26,7 +26,7 @@ export interface DeviceStatus {
   address: string;
   hostname: string;
   model: string;
-  device_type?: 'appletv' | 'kaleidescape';
+  device_type?: 'appletv' | 'kaleidescape' | 'sony';
   room: string | null;
   connected: boolean;
   paired?: boolean;
