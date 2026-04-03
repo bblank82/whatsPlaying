@@ -30,7 +30,6 @@ from pyatv.const import Protocol as _Protocol
 from atv_client import DeviceClient
 from credentials import get_for_device, save as save_credential, forget as forget_credentials
 from kscape_client import KaleidescapeClient
-from sony_client import SonyClient
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -62,7 +61,6 @@ def _save_runtime_config() -> None:
         json.dump({
             "extra_hosts": EXTRA_HOSTS,
             "kaleidescape_hosts": KALEIDESCAPE_HOSTS,
-            "sony_hosts": SONY_HOSTS,
             "ignored_devices": IGNORED_DEVICES,
         }, f, indent=2)
 
@@ -74,7 +72,6 @@ def _migrate_from_env() -> None:
     for key, env_key, default in [
         ("extra_hosts",       "EXTRA_HOSTS",       []),
         ("kaleidescape_hosts","KALEIDESCAPE_HOSTS", []),
-        ("sony_hosts",        "SONY_HOSTS",         []),
         ("ignored_devices",   "IGNORED_DEVICES",   []),
     ]:
         if key not in cfg:
@@ -91,7 +88,6 @@ _migrate_from_env()
 _cfg = _load_runtime_config()
 EXTRA_HOSTS:        list[str] = _cfg.get("extra_hosts", [])
 KALEIDESCAPE_HOSTS: list[str] = _cfg.get("kaleidescape_hosts", [])
-SONY_HOSTS:         list[str] = _cfg.get("sony_hosts", [])
 IGNORED_DEVICES:    list[str] = _cfg.get("ignored_devices", [])
 
 
@@ -341,7 +337,7 @@ async def discovery_loop():
                         extra_ids.add(ident)
 
             for ident in list(clients.keys()):
-                if isinstance(clients[ident], KaleidescapeClient) or isinstance(clients[ident], SonyClient):
+                if isinstance(clients[ident], KaleidescapeClient):
                     continue  # managed separately — never removed by ATV discovery
                 if ident not in found_ids and ident not in extra_ids:
                     # Disconnect but keep in clients — mDNS is flaky and a device
@@ -368,7 +364,7 @@ async def polling_loop():
             status = await client.get_status()
             status["room"] = device_rooms.get(client.identifier)
             cid = client.cred_id if hasattr(client, "cred_id") else client.identifier
-            status["paired"] = bool(get_for_device(cid)) if not isinstance(client, (KaleidescapeClient, SonyClient)) else True
+            status["paired"] = bool(get_for_device(cid)) if not isinstance(client, KaleidescapeClient) else True
             latest_statuses[client.identifier] = status
             statuses.append(status)
 
@@ -421,13 +417,6 @@ async def lifespan(app: FastAPI):
             clients[kc.identifier] = kc
             await kc.connect()
 
-    # Connect Sony players
-    for ip in SONY_HOSTS:
-        sc = SonyClient(ip)
-        if sc.identifier not in IGNORED_DEVICES:
-            clients[sc.identifier] = sc
-            await sc.connect()
-
     # Launch background tasks
     asyncio.create_task(discovery_loop())
     asyncio.create_task(polling_loop())
@@ -477,8 +466,8 @@ async def control_device(identifier: str, action: str, pos: Optional[float] = No
     if not client:
         return {"error": "Device not found"}
 
-    # Kaleidescape or Sony transport control
-    if isinstance(client, (KaleidescapeClient, SonyClient)):
+    # Kaleidescape transport control
+    if isinstance(client, KaleidescapeClient):
         try:
             await client.send_command(action, pos=int(pos) if pos is not None else None)
             return {"success": True}
