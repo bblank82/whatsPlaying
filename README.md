@@ -174,6 +174,25 @@ For true fullscreen, launch Chrome with `--app=http://{host}:8000` or install as
 
 ---
 
+## Deploying the Frontend to AWS Amplify
+
+The React frontend can be hosted as a static site on AWS Amplify. The FastAPI backend must be hosted separately (e.g. EC2, Fly.io) — update the frontend's API base URL to point at it before building.
+
+An `amplify.yml` is included at the repo root. Key detail: Amplify's build environment includes RVM, which intercepts `cd` commands via a `chpwd` hook and causes phase failures. The build spec uses `npm --prefix frontend` to avoid `cd` entirely:
+
+```yaml
+preBuild:
+  - npm ci --prefix frontend
+build:
+  - npm run build --prefix frontend
+```
+
+**Amplify console settings:**
+- Build spec: auto-detected from `amplify.yml` in the repo root
+- Output directory: `frontend/dist`
+
+---
+
 ## Testing
 
 ```bash

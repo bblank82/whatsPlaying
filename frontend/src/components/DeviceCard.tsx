@@ -160,9 +160,10 @@ function ScoresRow({ scores }: { scores: ScoreState }) {
 interface Props {
   device: DeviceStatus;
   onPair: (id: string) => void;
+  isDemo?: boolean;
 }
 
-export function DeviceCard({ device, onPair }: Props) {
+export function DeviceCard({ device, onPair, isDemo }: Props) {
   const { identifier, name, hostname, model, device_type, connected, paired, power, now_playing } = device;
   const debug = useDebug();
   const isKaleidescape = device_type === 'kaleidescape';
@@ -296,6 +297,22 @@ export function DeviceCard({ device, onPair }: Props) {
       .then(r => r.json()).then(d => setYtThumbUrl(d.thumbnail_url ?? null)).catch(() => {});
   }, [isYouTube, isActive, now_playing?.title, now_playing?.artist]);
 
+  // iTunes album art — for music content without native artwork
+  const isMusic = now_playing?.media_type?.toLowerCase().includes('music') ?? false;
+  const [itunesArtUrl, setItunesArtUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isMusic || !isActive) { setItunesArtUrl(null); return; }
+    const term = [now_playing?.artist, now_playing?.album ?? now_playing?.title].filter(Boolean).join(' ');
+    if (!term) return;
+    fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=album&limit=1`)
+      .then(r => r.json())
+      .then(d => {
+        const raw: string | undefined = d?.results?.[0]?.artworkUrl100;
+        if (raw) setItunesArtUrl(raw.replace('100x100bb', '600x600bb'));
+      })
+      .catch(() => {});
+  }, [isMusic, isActive, now_playing?.artist, now_playing?.album, now_playing?.title]);
+
   // Modal state
   const [showRemote, setShowRemote]   = useState(false);
   const [showArtwork, setShowArtwork] = useState(false);
@@ -334,8 +351,8 @@ export function DeviceCard({ device, onPair }: Props) {
   const artworkFallback = (isVideo && !tmdbResolved) ? null : (kscapeCoverUrl ?? artworkUrl);
   // When Kaleidescape provides its own cover art, use it directly (TMDB title search is
   // unreliable for sequels/subtitles and could return the wrong movie).
-  const cardArtworkSrc      = kscapeCoverUrl ?? tmdbPosterUrl ?? ytThumbUrl ?? artworkFallback;
-  const artworkFullscreenSrc = kscapeCoverUrl ?? tmdbFullsizeUrl ?? ytThumbUrl ?? artworkFallback;
+  const cardArtworkSrc      = kscapeCoverUrl ?? tmdbPosterUrl ?? itunesArtUrl ?? ytThumbUrl ?? artworkFallback;
+  const artworkFullscreenSrc = kscapeCoverUrl ?? tmdbFullsizeUrl ?? itunesArtUrl ?? ytThumbUrl ?? artworkFallback;
 
   const borderColor = connected
     ? isPlaying ? 'rgba(48,209,88,0.35)' : 'rgba(255,255,255,0.1)'
@@ -394,8 +411,8 @@ export function DeviceCard({ device, onPair }: Props) {
 
           {/* Right controls */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
-            {/* Pair button — Apple TVs only, only when connected */}
-            {connected && !isKaleidescape && (
+            {/* Pair button — Apple TVs only, only when connected, not in demo */}
+            {!isDemo && connected && !isKaleidescape && (
               <button
                 onClick={() => onPair(identifier)}
                 title="Pair additional protocols"
@@ -566,7 +583,7 @@ export function DeviceCard({ device, onPair }: Props) {
                   {isKaleidescape ? 'Disconnected' : paired ? 'Unreachable' : 'Not paired'}
                 </p>
               </div>
-              {!isKaleidescape && !paired && (
+              {!isDemo && !isKaleidescape && !paired && (
                 <button
                   onClick={() => onPair(identifier)}
                   style={{

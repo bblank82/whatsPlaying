@@ -150,7 +150,7 @@ export default function App() {
                   return a.name.localeCompare(b.name);
                 }).map(device => (
                 <div key={device.identifier} style={{ position: 'relative' }}>
-                  <DeviceCard device={device} onPair={handlePair} />
+                  <DeviceCard device={device} onPair={handlePair} isDemo={isDemo} />
                   {isDemo && (
                     <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', gap: 5, zIndex: 5 }}>
                       <button

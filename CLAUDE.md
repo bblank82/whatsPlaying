@@ -160,22 +160,26 @@ Backend serves `frontend/dist/` automatically — no config change needed after 
 ## Demo mode
 - Activated via URL param: `http://localhost:8000/?demo`
 - Entirely frontend-only — no WebSocket connection, no backend device APIs used
-- Shows two mock Apple TV devices with real movie/show metadata so TMDB posters and RT/IMDb scores load automatically:
-  - **Living Room** — Netflix — *Succession* S3E7, actively playing (position ticks every second)
-  - **Theater** — Plex — *The Dark Knight*, paused partway through
+- Shows four mock devices across three rooms:
+  - **Living Room** — Apple TV — Netflix — *Succession* S3E7, actively playing (position ticks every second)
+  - **Theater** — Apple TV — Plex — *The Dark Knight*, paused partway through
+  - **Theater (Kaleidescape)** — Kaleidescape Strato — *Dune: Part Two*, actively playing
+  - **Bedroom** — Apple TV — Apple Music — *Midnight Rain* by Taylor Swift (*Midnights*), actively playing
+- Pair button and "Pair" link are hidden on all cards in demo mode (`isDemo` prop on `DeviceCard`)
 - Header shows an amber **DEMO** badge; gear/admin button is hidden
 - Each card has a **Kiosk** (landscape) and **Kiosk ↕** (portrait) button that open `CinematicKioskView`
 - Demo kiosk overlays can be closed with Escape or by clicking anywhere (unlike real kiosk mode which is non-dismissible)
 - Implemented in `frontend/src/demo/useDemoDevices.ts`; wired into `App.tsx` via the `isDemo` flag; `useDevices` accepts an `enabled` param to skip the WebSocket when false
-- `DeviceCard` accepts an optional `onKioskClose` prop — when provided, the ArtworkModal becomes click-dismissible and calls the callback on close
 
 ## Cinematic kiosk view
 - **The only kiosk view, and also the click-to-expand artwork view** — `frontend/src/components/CinematicKioskView.tsx`
 - `ArtworkModal` has been removed
-- Fetches rich metadata from `/api/tmdb/details` (overview, cast, genres, tagline, backdrop, year, runtime) and `/api/scores` independently
+- Fetches rich metadata from `/api/tmdb/details` (overview, cast, genres, tagline, backdrop, year, runtime) and `/api/scores` independently — **skipped entirely for music content**
 - Props: `deviceName`, `nowPlaying`, `lookupTitle`, `mediaType`, `effectiveSeries`, `orientation` (`'landscape'` | `'portrait'`), `kioskActive` (false in demo, true in production — controls click-to-dismiss and cursor), `onClose`
 - Rendered at App level (not inside DeviceCard) — in demo via `demoKiosk` state; in production when `kioskConfig.kiosk && kioskHasContent`
-- **Backdrop**: blurred/darkened `<img>` element covering the full canvas (`filter: blur(40px) brightness(0.35) saturate(1.3)`, scaled 1.07×); uses backdrop URL falling back to poster
+- **Music layout**: when `nowPlaying.media_type` contains `"music"`, renders a centered layout — album art (from iTunes Search API), track title, artist, album, app name, progress bar. No TMDB/scores fetched.
+- **iTunes album art** (`CinematicKioskView` + `DeviceCard`): fetches from `https://itunes.apple.com/search?term={artist}+{album}&media=music&entity=album&limit=1` when `isMusic`. Uses `artworkUrl100` from the first result, URL-substituted to `600x600bb`. No API key required. Also used as the blurred backdrop in the music kiosk layout.
+- **Backdrop**: blurred/darkened `<img>` element covering the full canvas (`filter: blur(40px) brightness(0.35) saturate(1.3)`, scaled 1.07×); uses backdrop URL falling back to poster, falling back to `albumArtUrl` for music
 - **Landscape layout**: flex row — contained poster with drop shadow (38% left), info panel (62% right)
 - **Portrait layout**: 58/42 absolute split using CSS coordinates (which are rotated 90° CW relative to the visual display):
   - Poster section: `position: absolute, top: 0, height: 58%` → occupies visual **right** 58%

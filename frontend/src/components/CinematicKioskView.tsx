@@ -142,6 +142,7 @@ export function CinematicKioskView({
   const containerRef = useRef<HTMLDivElement>(null);
   const [details, setDetails] = useState<TmdbDetails | null>(null);
   const [scores, setScores] = useState<ScoreState | null>(null);
+  const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
 
   // Request fullscreen on mount
   useEffect(() => {
@@ -162,9 +163,27 @@ export function CinematicKioskView({
     };
   }, [onClose]);
 
-  // Fetch TMDB details (overview, cast, genres, etc.)
+  const isMusic = nowPlaying?.media_type?.toLowerCase().includes('music') ?? false;
+
+  // Fetch album art from iTunes Search API
   useEffect(() => {
-    if (!lookupTitle) return;
+    if (!isMusic) { setAlbumArtUrl(null); return; }
+    const { artist, album, title } = nowPlaying ?? {};
+    const term = [artist, album ?? title].filter(Boolean).join(' ');
+    if (!term) return;
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=album&limit=1`;
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        const raw: string | undefined = data?.results?.[0]?.artworkUrl100;
+        if (raw) setAlbumArtUrl(raw.replace('100x100bb', '600x600bb'));
+      })
+      .catch(() => {});
+  }, [isMusic, nowPlaying?.artist, nowPlaying?.album, nowPlaying?.title]);
+
+  // Fetch TMDB details (overview, cast, genres, etc.) — skip for music
+  useEffect(() => {
+    if (!lookupTitle || isMusic) return;
     const params = new URLSearchParams({ title: lookupTitle, media_type: mediaType });
     if (nowPlaying?.season_number != null)
       params.set('season_number', String(nowPlaying.season_number));
@@ -174,17 +193,17 @@ export function CinematicKioskView({
       .then(r => r.json())
       .then((d: TmdbDetails) => { if (d.available) setDetails(d); })
       .catch(() => {});
-  }, [lookupTitle, mediaType, nowPlaying?.season_number, nowPlaying?.episode_number]);
+  }, [lookupTitle, mediaType, isMusic, nowPlaying?.season_number, nowPlaying?.episode_number]);
 
-  // Fetch scores
+  // Fetch scores — skip for music
   useEffect(() => {
-    if (!lookupTitle) return;
+    if (!lookupTitle || isMusic) return;
     const params = new URLSearchParams({ title: lookupTitle, media_type: mediaType });
     fetch(`/api/scores?${params}`)
       .then(r => r.json())
       .then(setScores)
       .catch(() => {});
-  }, [lookupTitle, mediaType]);
+  }, [lookupTitle, mediaType, isMusic]);
 
   // Live-ticking position
   const { position, total_time, device_state } = nowPlaying ?? {};
@@ -238,7 +257,7 @@ export function CinematicKioskView({
 
   const isPortrait = orientation === 'portrait';
   const posterSrc = details?.fullsize_url ?? details?.poster_url ?? null;
-  const backdropSrc = details?.backdrop_url ?? posterSrc;
+  const backdropSrc = details?.backdrop_url ?? posterSrc ?? albumArtUrl;
   const castToShow = isPortrait
     ? (details?.cast ?? []).slice(0, 4)
     : (details?.cast ?? []).slice(0, 5);
@@ -295,7 +314,160 @@ export function CinematicKioskView({
         }} />
 
         {/* ── Main layout ── */}
-        {isPortrait ? (
+        {isMusic ? (
+
+          /* ================================================================
+             MUSIC: centered track info, no TMDB, no scores
+             ================================================================ */
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 1,
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            padding: '6vmin',
+            boxSizing: 'border-box',
+          }}>
+
+            {/* Album art or music note placeholder */}
+            {albumArtUrl ? (
+              <img
+                src={albumArtUrl}
+                alt={nowPlaying?.album ?? nowPlaying?.title ?? ''}
+                style={{
+                  width: 'clamp(120px, 22vmin, 220px)',
+                  height: 'clamp(120px, 22vmin, 220px)',
+                  borderRadius: 16,
+                  objectFit: 'cover',
+                  boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.08)',
+                  marginBottom: '4vmin',
+                  flexShrink: 0,
+                }}
+              />
+            ) : (
+              <div style={{
+                width: 'clamp(80px, 16vmin, 140px)',
+                height: 'clamp(80px, 16vmin, 140px)',
+                borderRadius: '50%',
+                background: 'rgba(255,255,255,0.07)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                marginBottom: '4vmin',
+                flexShrink: 0,
+              }}>
+                <svg
+                  width="clamp(36px,7vmin,62px)" height="clamp(36px,7vmin,62px)"
+                  viewBox="0 0 24 24" fill="none"
+                  stroke="rgba(255,255,255,0.55)" strokeWidth="1.4"
+                  strokeLinecap="round" strokeLinejoin="round"
+                >
+                  <path d="M9 18V5l12-2v13"/>
+                  <circle cx="6" cy="18" r="3"/>
+                  <circle cx="18" cy="16" r="3"/>
+                </svg>
+              </div>
+            )}
+
+            {/* Track title */}
+            {nowPlaying?.title && (
+              <h1 style={{
+                fontSize: 'clamp(28px, 5.5vmin, 60px)',
+                fontWeight: 800,
+                color: '#fff',
+                letterSpacing: '-0.5px',
+                lineHeight: 1.1,
+                textAlign: 'center',
+                margin: '0 0 1.5vmin',
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                textOverflow: 'ellipsis',
+              }}>
+                {nowPlaying.title}
+              </h1>
+            )}
+
+            {/* Artist */}
+            {nowPlaying?.artist && (
+              <p style={{
+                fontSize: 'clamp(16px, 3vmin, 30px)',
+                color: 'rgba(255,255,255,0.72)',
+                fontWeight: 500,
+                textAlign: 'center',
+                marginBottom: '0.8vmin',
+              }}>
+                {nowPlaying.artist}
+              </p>
+            )}
+
+            {/* Album */}
+            {nowPlaying?.album && (
+              <p style={{
+                fontSize: 'clamp(12px, 2vmin, 20px)',
+                color: 'rgba(255,255,255,0.35)',
+                fontStyle: 'italic',
+                textAlign: 'center',
+                marginBottom: '5vmin',
+              }}>
+                {nowPlaying.album}
+              </p>
+            )}
+
+            {/* App name */}
+            {nowPlaying?.app_name && (
+              <p style={{
+                fontSize: 'clamp(10px, 1.6vmin, 14px)',
+                color: 'rgba(255,255,255,0.28)',
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                marginBottom: '4vmin',
+              }}>
+                {nowPlaying.app_name}
+              </p>
+            )}
+
+            {/* Progress bar */}
+            {pct != null && (
+              <div style={{ width: '100%', maxWidth: 480 }}>
+                <div style={{ height: 3, background: 'rgba(255,255,255,0.13)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', width: `${pct}%`,
+                    background: 'rgba(255,255,255,0.72)', borderRadius: 2,
+                    transition: 'width 1s linear',
+                  }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.8vmin' }}>
+                  <span style={{
+                    fontSize: 'clamp(9px, 1.6vmin, 13px)',
+                    color: 'rgba(255,255,255,0.28)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>{formatTime(livePos)}</span>
+                  {livePos != null && total_time != null && (
+                    <span style={{
+                      fontSize: 'clamp(9px, 1.6vmin, 13px)',
+                      color: 'rgba(255,255,255,0.28)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>−{formatTime(total_time - livePos)}</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Device name */}
+            <div style={{
+              position: 'absolute', bottom: '3vmin',
+              display: 'flex', alignItems: 'center', gap: '0.8vmin',
+            }}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="rgba(255,255,255,0.3)" stroke="none">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span style={{ fontSize: 'clamp(10px, 1.6vmin, 13px)', color: 'rgba(255,255,255,0.3)' }}>
+                Now Playing on <span style={{ color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>{deviceName}</span>
+              </span>
+            </div>
+
+          </div>
+
+        ) : isPortrait ? (
 
           /* ================================================================
              PORTRAIT: poster fills canvas (contain), info overlaid at bottom
