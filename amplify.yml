@@ -3,10 +3,10 @@ frontend:
   phases:
     preBuild:
       commands:
-        - cd $CODEBUILD_SRC_DIR/frontend && npm ci
+        - npm ci --prefix frontend
     build:
       commands:
-        - cd $CODEBUILD_SRC_DIR/frontend && npm run build
+        - npm run build --prefix frontend
   artifacts:
     baseDirectory: frontend/dist
     files:
