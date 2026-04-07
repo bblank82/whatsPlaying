@@ -56,10 +56,12 @@ cd backend && .venv/bin/python3 main.py
 
 ## Frontend structure
 - `frontend/src/App.tsx` — main layout, device sort order, gear/admin button, debug panel, kiosk logic
-- `frontend/src/hooks/useDevices.ts` — WebSocket connection, device state, kiosk config (including `room_id`)
+- `frontend/src/hooks/useDevices.ts` — WebSocket connection, device state, kiosk config (including `room_id`); exposes `reconnecting` state
+- `frontend/src/hooks/useContentData.ts` — shared hooks and pure helpers: `parseContentMetadata`, `useScores`, `useContentArtwork`; used by `DeviceCard` and `CinematicKioskView`
 - `frontend/src/contexts/debug.ts` — React context for routing log entries to the debug panel
 - `frontend/src/components/DeviceCard.tsx` — per-device card, artwork, transport controls
 - `frontend/src/components/CinematicKioskView.tsx` — fullscreen cinematic view; used for both kiosk mode and click-to-expand artwork
+- `frontend/src/components/ErrorBoundary.tsx` — React class ErrorBoundary; wraps each device card so a single card failure can't crash the full UI
 - `frontend/src/components/AdminModal.tsx` — Settings panel: show-unpaired toggle, scan button, add/remove device by IP, room assignment, hidden devices, kiosk management, server restart, debug toggle
 - `frontend/src/components/RemoteModal.tsx` — navigation/transport remote (no volume buttons)
 - `frontend/src/components/PairModal.tsx` — shows all available protocols with paired/unpaired status; individual Pair/Re-pair per protocol; "Forget & Re-pair All" and "Forget Device"
@@ -127,10 +129,16 @@ Playing/paused → connected → disconnected; alphabetical within each group.
 - Falls back to show-level poster if no season art exists
 - Frontend passes `episode_title = now_playing.title` whenever `effectiveSeries` is set and `effectiveSeason` is null (e.g. HBO Max doesn't report season metadata)
 
+## Backend metadata cache
+- In-memory TTL cache (`_METADATA_CACHE`) on `/api/scores`, `/api/tmdb`, and `/api/tmdb/details`
+- TTL: 1 hour (`_METADATA_TTL = 3600`)
+- Helpers: `_cache_get(key)` returns cached value or `None`; `_cache_set(key, value)` stores with expiry and evicts expired entries when cache exceeds 500 keys
+- Cache keys are tuples of endpoint name + all query params (title, media_type, etc.)
+
 ## Kaleidescape controls
 - Card and remote show scan-reverse / scan-forward icons (⏪⏩) with no "10s" label — these are variable-speed scans, not fixed seeks
 - Chapter navigation buttons (PREVIOUS / NEXT wire commands) flank the scan buttons on the card; remote's Prev/Next row shows "Ch" label for Kaleidescape
-- Progress bar click-to-seek is disabled for Kaleidescape (`onSeek` passed as `undefined`)
+- Progress bar click-to-seek is enabled for Kaleidescape (`SET_POSITION:HH:MM:SS` wire command)
 
 ## Key env vars (`backend/.env`)
 ```
@@ -193,6 +201,11 @@ Backend serves `frontend/dist/` automatically — no config change needed after 
   - For TV shows with `season_number` + `episode_number`, fetches episode-specific overview from `GET /tv/{id}/season/{s}/episode/{e}` and uses it in place of the series overview; falls back to series overview if the episode has none or the fetch fails
   - Frontend passes `nowPlaying.season_number` and `nowPlaying.episode_number` when available; effect re-runs if either changes
 
+## WebSocket connection state
+- `useDevices` exposes `connected` (WS open) and `reconnecting` (true after first disconnect, cleared on reconnect)
+- `App.tsx` header dot: green = connected, amber = reconnecting, red = never connected / permanently disconnected
+- Status text: "N of N online" / "Reconnecting…" / "Disconnected"
+
 ## Testing
 ```bash
 # Backend (pytest)
@@ -201,4 +214,4 @@ cd backend && source .venv/bin/activate && python -m pytest test_utils.py -v
 # Frontend (vitest)
 cd frontend && npm test -- --run
 ```
-Tests cover: title cleaning, RT score parsing, RT URL matching, offline status room field, known-device room preservation, frontend utility functions (formatTime, appLabel, title parsers, generic title detection).
+Tests cover: title cleaning, RT score parsing, RT URL matching, offline status room field, known-device room preservation, frontend utility functions (formatTime, appLabel, title parsers, generic title detection), `parseContentMetadata` (null input, YouTube/music detection, Hulu parsing, series metadata, generic title suppression, forceMediaType, ARTIST_AS_SERIES_APP_IDS).

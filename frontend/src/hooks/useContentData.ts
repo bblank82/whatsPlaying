@@ -95,10 +95,12 @@ export function useScores(
   useEffect(() => {
     if (!lookupTitle || !isVideo || !isActive) { setScores(null); return; }
     setScores(null);
+    const controller = new AbortController();
     const params = new URLSearchParams({ title: lookupTitle, media_type: mediaTypeForApi });
     if (forceMediaType) params.set('force_media_type', 'true');
-    fetch(`/api/scores?${params}`)
+    fetch(`/api/scores?${params}`, { signal: controller.signal })
       .then(r => r.json()).then(setScores).catch(() => {});
+    return () => controller.abort();
   }, [lookupTitle, mediaTypeForApi, forceMediaType, isVideo, isActive]);
   return scores;
 }
@@ -137,7 +139,7 @@ export function useContentArtwork({
   lookupTitle, mediaTypeForApi, forceMediaType, effectiveSeries, effectiveSeason,
 }: ContentArtworkParams): ContentArtworkResult {
 
-  // Native device artwork
+  // Native device artwork — just a URL construction, no fetch needed
   const artworkCacheKey = now_playing?.artwork_id ?? now_playing?.title ?? null;
   const [artworkUrl, setArtworkUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -155,17 +157,19 @@ export function useContentArtwork({
       setTmdbPosterUrl(null); setTmdbFullsizeUrl(null); setTmdbResolved(false); return;
     }
     setTmdbResolved(false);
+    const controller = new AbortController();
     const params = new URLSearchParams({ title: lookupTitle, media_type: mediaTypeForApi });
     if (forceMediaType) params.set('force_media_type', 'true');
     if (effectiveSeason != null) params.set('season_number', String(effectiveSeason));
     if (effectiveSeries && now_playing?.title && effectiveSeason == null)
       params.set('episode_title', now_playing.title);
-    fetch(`/api/tmdb?${params}`)
+    fetch(`/api/tmdb?${params}`, { signal: controller.signal })
       .then(r => r.json()).then(d => {
         setTmdbPosterUrl(d.poster_url ?? null);
         setTmdbFullsizeUrl(d.fullsize_url ?? null);
       }).catch(() => {})
       .finally(() => setTmdbResolved(true));
+    return () => controller.abort();
   }, [lookupTitle, mediaTypeForApi, forceMediaType, effectiveSeason, now_playing?.title, isVideo, isActive]);
 
   // App icon
@@ -173,28 +177,34 @@ export function useContentArtwork({
   useEffect(() => {
     const appId = now_playing?.app_id ?? null;
     if (!appId || !isActive) { setAppIconUrl(null); return; }
-    fetch(`/api/app_icon?bundle_id=${encodeURIComponent(appId)}`)
+    const controller = new AbortController();
+    fetch(`/api/app_icon?bundle_id=${encodeURIComponent(appId)}`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
       .then(d => setAppIconUrl(d?.url ?? null))
       .catch(() => {});
+    return () => controller.abort();
   }, [now_playing?.app_id, isActive]);
 
   // YouTube thumbnail
   const [ytThumbUrl, setYtThumbUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!isYouTube || !isActive || !now_playing?.title) { setYtThumbUrl(null); return; }
+    const controller = new AbortController();
     const params = new URLSearchParams({ title: now_playing.title });
     if (now_playing.artist) params.set('channel', now_playing.artist);
-    fetch(`/api/youtube_thumbnail?${params}`)
+    fetch(`/api/youtube_thumbnail?${params}`, { signal: controller.signal })
       .then(r => r.json()).then(d => setYtThumbUrl(d.thumbnail_url ?? null)).catch(() => {});
+    return () => controller.abort();
   }, [isYouTube, isActive, now_playing?.title, now_playing?.artist]);
 
-  // iTunes album art (music)
+  // iTunes album art (music) — fetchItunesAlbumArt handles its own abort internally
   const [itunesArtUrl, setItunesArtUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!isMusic || !isActive) { setItunesArtUrl(null); return; }
+    let cancelled = false;
     fetchItunesAlbumArt(now_playing?.artist ?? null, now_playing?.album ?? null, now_playing?.title ?? null)
-      .then(url => setItunesArtUrl(url));
+      .then(url => { if (!cancelled) setItunesArtUrl(url); });
+    return () => { cancelled = true; };
   }, [isMusic, isActive, now_playing?.artist, now_playing?.album, now_playing?.title]);
 
   // Resolve final artwork sources

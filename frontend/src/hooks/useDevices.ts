@@ -17,10 +17,12 @@ export interface KioskConfig {
 export function useDevices(logRef?: MutableRefObject<LogFn>, enabled = true) {
   const [devices, setDevices] = useState<DeviceStatus[]>([]);
   const [connected, setConnected] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
   const [kioskConfig, setKioskConfig] = useState<KioskConfig>({ kiosk: false, orientation: 'landscape', device_id: null, room_id: null });
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasConnectedRef = useRef(false);
 
   // Force a full page reload every 10 minutes when in kiosk mode to pick up UI updates
   useEffect(() => {
@@ -40,7 +42,9 @@ export function useDevices(logRef?: MutableRefObject<LogFn>, enabled = true) {
 
       ws.onopen = () => {
         if (cancelled) { ws.close(); return; }
+        hasConnectedRef.current = true;
         setConnected(true);
+        setReconnecting(false);
       };
 
       ws.onmessage = (event) => {
@@ -66,6 +70,7 @@ export function useDevices(logRef?: MutableRefObject<LogFn>, enabled = true) {
       ws.onclose = () => {
         setConnected(false);
         if (!cancelled) {
+          if (hasConnectedRef.current) setReconnecting(true);
           timerRef.current = setTimeout(connect, RECONNECT_DELAY);
         }
       };
@@ -86,5 +91,5 @@ export function useDevices(logRef?: MutableRefObject<LogFn>, enabled = true) {
     await fetch('/api/scan', { method: 'POST' });
   }
 
-  return { devices, connected, triggerScan, clientId, kioskConfig };
+  return { devices, connected, reconnecting, triggerScan, clientId, kioskConfig };
 }

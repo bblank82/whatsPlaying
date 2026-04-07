@@ -630,6 +630,30 @@ async def trigger_scan():
 # Scores / metadata endpoints
 # ---------------------------------------------------------------------------
 
+import time as _time
+
+_METADATA_CACHE: dict[tuple, tuple] = {}   # key → (result_dict, expires_at)
+_METADATA_TTL = 3600  # 1 hour
+
+
+def _cache_get(key: tuple):
+    entry = _METADATA_CACHE.get(key)
+    if entry and _time.monotonic() < entry[1]:
+        return entry[0]
+    _METADATA_CACHE.pop(key, None)
+    return None
+
+
+def _cache_set(key: tuple, value):
+    _METADATA_CACHE[key] = (value, _time.monotonic() + _METADATA_TTL)
+    # Evict expired entries when cache grows large
+    if len(_METADATA_CACHE) > 500:
+        now = _time.monotonic()
+        expired = [k for k, (_, exp) in _METADATA_CACHE.items() if now >= exp]
+        for k in expired:
+            del _METADATA_CACHE[k]
+
+
 def _clean_title(title: str) -> str:
     """Strip trailing year annotations like '(1996)' or '[2024]' from titles."""
     return re.sub(r'\s*[\(\[]\d{4}[\)\]]\s*$', '', title).strip()
@@ -737,6 +761,9 @@ async def get_rt_scores(title: str, media_type: str = "movie", force_media_type:
     """Return RT critic score via TMDB → OMDB, with a direct RT page URL scraped from RT search."""
     title = _clean_title(title)
     rt_search_url = f"https://www.rottentomatoes.com/search?search={url_quote(title)}"
+    cache_key = ("scores", title, media_type, force_media_type)
+    if (cached := _cache_get(cache_key)) is not None:
+        return cached
 
     try:
         async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
@@ -786,13 +813,15 @@ async def get_rt_scores(title: str, media_type: str = "movie", force_media_type:
                 except Exception as rt_exc:
                     logger.debug("RT page scrape failed for %r: %s", rt_url, rt_exc)
 
-            return {
+            result = {
                 "tomatometer": tomatometer,
                 "audience_score": None,
                 "url": rt_url,
                 "imdb_id": imdb_id,
                 "imdb_rating": imdb_rating,
             }
+            _cache_set(cache_key, result)
+            return result
 
     except Exception as exc:
         logger.debug("Scores lookup failed for %r: %s", title, exc)
@@ -849,6 +878,9 @@ async def get_tmdb(title: str, media_type: str = "movie", force_media_type: bool
     """
     if not TMDB_API_KEY:
         return {"available": False}
+    cache_key = ("tmdb", _clean_title(title), media_type, force_media_type, season_number, episode_title)
+    if (cached := _cache_get(cache_key)) is not None:
+        return cached
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             match = await _tmdb_match(client, title, media_type, force_hint=force_media_type)
@@ -889,12 +921,14 @@ async def get_tmdb(title: str, media_type: str = "movie", force_media_type: bool
                 )
                 poster = detail.json().get("poster_path")
 
-            return {
+            result = {
                 "available": True,
                 "poster_url": f"https://image.tmdb.org/t/p/w500{poster}" if poster else None,
                 "fullsize_url": f"https://image.tmdb.org/t/p/original{poster}" if poster else None,
                 "tmdb_url": f"https://www.themoviedb.org/{kind}/{tmdb_id}" if tmdb_id else None,
             }
+            _cache_set(cache_key, result)
+            return result
     except Exception as exc:
         logger.debug("TMDB lookup failed for %r: %s", title, exc)
     return {"available": False}
@@ -910,6 +944,9 @@ async def get_tmdb_details(title: str, media_type: str = "movie", force_media_ty
     """
     if not TMDB_API_KEY:
         return {"available": False}
+    cache_key = ("tmdb_details", _clean_title(title), media_type, force_media_type, season_number, episode_number)
+    if (cached := _cache_get(cache_key)) is not None:
+        return cached
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             match = await _tmdb_match(client, title, media_type, force_hint=force_media_type)
@@ -957,7 +994,7 @@ async def get_tmdb_details(title: str, media_type: str = "movie", force_media_ty
                 except Exception as exc:
                     logger.debug("TMDB episode overview fetch failed for %r s%se%s: %s", title, season_number, episode_number, exc)
 
-            return {
+            result = {
                 "available": True,
                 "overview": overview,
                 "tagline": d.get("tagline"),
@@ -970,6 +1007,8 @@ async def get_tmdb_details(title: str, media_type: str = "movie", force_media_ty
                 "fullsize_url": f"https://image.tmdb.org/t/p/original{poster}" if poster else None,
                 "backdrop_url": f"https://image.tmdb.org/t/p/original{backdrop}" if backdrop else None,
             }
+            _cache_set(cache_key, result)
+            return result
     except Exception as exc:
         logger.debug("TMDB details lookup failed for %r: %s", title, exc)
     return {"available": False}

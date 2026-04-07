@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { DeviceStatus } from '../types';
 import { NowPlaying } from './NowPlaying';
 import { RemoteModal } from './RemoteModal';
@@ -177,7 +177,7 @@ export function DeviceCard({ device, onPair, isDemo }: Props) {
   const {
     effectiveSeries, effectiveSeason, effectiveEpisode, effectiveEpisodeTitle,
     isYouTube, isVideo, isMusic, lookupTitle, mediaTypeForApi, forceMediaType, huluMatch,
-  } = parseContentMetadata(now_playing);
+  } = useMemo(() => parseContentMetadata(now_playing), [now_playing]);
 
   // RT/IMDb scores
   const scores: ScoreState | null = useScores(lookupTitle, mediaTypeForApi, forceMediaType, isVideo, isActive);
@@ -340,7 +340,7 @@ export function DeviceCard({ device, onPair, isDemo }: Props) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <NowPlaying
                     nowPlaying={effectiveNowPlaying}
-                    onSeek={isKaleidescape ? undefined : pos => {
+                    onSeek={pos => {
                       debug.log('send', `set_position pos=${pos}`, name);
                       fetch(`/api/devices/${encodeURIComponent(identifier)}/control/set_position?pos=${pos}`, { method: 'POST' });
                     }}

@@ -5,7 +5,9 @@ import { DeviceCard } from './components/DeviceCard';
 import { PairModal } from './components/PairModal';
 import { AdminModal } from './components/AdminModal';
 import { CinematicKioskView } from './components/CinematicKioskView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { DebugContext, type LogEntry } from './contexts/debug';
+import type { DeviceStatus } from './types';
 
 const isDemo = new URLSearchParams(window.location.search).has('demo');
 
@@ -24,12 +26,13 @@ export default function App() {
     setDebugEntries(prev => [...prev.slice(-299), { id: debugIdRef.current++, ts, direction, device, message }]);
   };
 
-  const { devices: realDevices, connected: realConnected, triggerScan, kioskConfig } = useDevices(logRef, !isDemo);
+  const { devices: realDevices, connected: realConnected, reconnecting: realReconnecting, triggerScan, kioskConfig } = useDevices(logRef, !isDemo);
   const demoDeviceList = useDemoDevices();
   const [demoKiosk, setDemoKiosk] = useState<{ id: string; orientation: 'landscape' | 'portrait' } | null>(null);
 
   const devices = isDemo ? demoDeviceList : realDevices;
   const connected = isDemo ? true : realConnected;
+  const reconnecting = !isDemo && realReconnecting;
 
   const [pairingDevice, setPairingDevice] = useState<{ id: string; name: string; isConnected: boolean } | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -117,9 +120,9 @@ export default function App() {
 
             {/* Right side */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {!isDemo && <div style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? '#30D158' : '#FF453A', boxShadow: connected ? '0 0 6px #30D158' : 'none' }} />}
+              {!isDemo && <div style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? '#30D158' : reconnecting ? '#FF9F0A' : '#FF453A', boxShadow: connected ? '0 0 6px #30D158' : reconnecting ? '0 0 6px #FF9F0A' : 'none' }} />}
               <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)' }}>
-                {isDemo ? `${devices.length} demo devices` : connected ? `${onlineCount} of ${devices.length} online` : 'Disconnected'}
+                {isDemo ? `${devices.length} demo devices` : connected ? `${onlineCount} of ${devices.length} online` : reconnecting ? 'Reconnecting…' : 'Disconnected'}
               </span>
             </div>
           </div>
@@ -149,7 +152,8 @@ export default function App() {
                   if (connDiff !== 0) return connDiff;
                   return a.name.localeCompare(b.name);
                 }).map(device => (
-                <div key={device.identifier} style={{ position: 'relative' }}>
+                <ErrorBoundary key={device.identifier}>
+                <div style={{ position: 'relative' }}>
                   <DeviceCard device={device} onPair={handlePair} isDemo={isDemo} />
                   {isDemo && (
                     <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', gap: 5, zIndex: 5 }}>
@@ -190,6 +194,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
+                </ErrorBoundary>
               ))}
             </div>
           )}
@@ -246,8 +251,6 @@ export default function App() {
     </DebugContext.Provider>
   );
 }
-
-import type { DeviceStatus } from './types';
 
 function KioskRenderer({ kioskDevice, orientation, kioskActive, onClose }: {
   kioskDevice: DeviceStatus | null;

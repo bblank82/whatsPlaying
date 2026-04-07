@@ -245,32 +245,38 @@ export function CinematicKioskView({
   // Fetch album art from iTunes Search API
   useEffect(() => {
     if (!isMusic) { setAlbumArtUrl(null); return; }
+    let cancelled = false;
     fetchItunesAlbumArt(nowPlaying?.artist ?? null, nowPlaying?.album ?? null, nowPlaying?.title ?? null)
-      .then(url => setAlbumArtUrl(url));
+      .then(url => { if (!cancelled) setAlbumArtUrl(url); });
+    return () => { cancelled = true; };
   }, [isMusic, nowPlaying?.artist, nowPlaying?.album, nowPlaying?.title]);
 
   // Fetch TMDB details (overview, cast, genres, etc.) — skip for music
   useEffect(() => {
-    if (!lookupTitle || isMusic) return;
+    if (!lookupTitle || isMusic) { setDetails(null); return; }
+    const controller = new AbortController();
     const params = new URLSearchParams({ title: lookupTitle, media_type: mediaType });
     if (nowPlaying?.season_number != null)
       params.set('season_number', String(nowPlaying.season_number));
     if (nowPlaying?.episode_number != null)
       params.set('episode_number', String(nowPlaying.episode_number));
-    fetch(`/api/tmdb/details?${params}`)
+    fetch(`/api/tmdb/details?${params}`, { signal: controller.signal })
       .then(r => r.json())
       .then((d: TmdbDetails) => { if (d.available) setDetails(d); })
       .catch(() => {});
+    return () => controller.abort();
   }, [lookupTitle, mediaType, isMusic, nowPlaying?.season_number, nowPlaying?.episode_number]);
 
   // Fetch scores — skip for music
   useEffect(() => {
-    if (!lookupTitle || isMusic) return;
+    if (!lookupTitle || isMusic) { setScores(null); return; }
+    const controller = new AbortController();
     const params = new URLSearchParams({ title: lookupTitle, media_type: mediaType });
-    fetch(`/api/scores?${params}`)
+    fetch(`/api/scores?${params}`, { signal: controller.signal })
       .then(r => r.json())
       .then(setScores)
       .catch(() => {});
+    return () => controller.abort();
   }, [lookupTitle, mediaType, isMusic]);
 
   // Live-ticking position
