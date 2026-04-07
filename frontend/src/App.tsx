@@ -230,40 +230,47 @@ export default function App() {
         )}
 
         {/* Cinematic kiosk — demo and production */}
-        {(() => {
-          let kioskDevice = null;
-          let orientation: 'landscape' | 'portrait' = 'landscape';
-          let kioskActive = false;
-
-          if (isDemo && demoKiosk) {
-            kioskDevice = devices.find(d => d.identifier === demoKiosk.id) ?? null;
-            orientation = demoKiosk.orientation;
-          } else if (!isDemo && kioskConfig.kiosk && kioskHasContent) {
-            kioskDevice = devices.find(d => isKioskDevice(d.identifier)) ?? null;
-            orientation = kioskConfig.orientation;
-            kioskActive = true;
+        <KioskRenderer
+          kioskDevice={
+            isDemo && demoKiosk
+              ? (devices.find(d => d.identifier === demoKiosk.id) ?? null)
+              : !isDemo && kioskConfig.kiosk && kioskHasContent
+              ? (devices.find(d => isKioskDevice(d.identifier)) ?? null)
+              : null
           }
-
-          if (!kioskDevice) return null;
-          const np = kioskDevice.now_playing;
-          const effectiveSeries = np?.series_name ?? null;
-          const lookupTitle = effectiveSeries ?? np?.title ?? null;
-          const mediaType: 'movie' | 'show' = effectiveSeries ? 'show' : 'movie';
-          return (
-            <CinematicKioskView
-              deviceName={kioskDevice.name}
-              nowPlaying={np}
-              lookupTitle={lookupTitle}
-              mediaType={mediaType}
-              effectiveSeries={effectiveSeries}
-              orientation={orientation}
-              kioskActive={kioskActive}
-              onClose={() => { if (isDemo) setDemoKiosk(null); }}
-            />
-          );
-        })()}
+          orientation={isDemo && demoKiosk ? demoKiosk.orientation : kioskConfig.orientation}
+          kioskActive={!isDemo && kioskConfig.kiosk && kioskHasContent}
+          onClose={() => { if (isDemo) setDemoKiosk(null); }}
+        />
       </div>
     </DebugContext.Provider>
+  );
+}
+
+import type { DeviceStatus } from './types';
+
+function KioskRenderer({ kioskDevice, orientation, kioskActive, onClose }: {
+  kioskDevice: DeviceStatus | null;
+  orientation: 'landscape' | 'portrait';
+  kioskActive: boolean;
+  onClose: () => void;
+}) {
+  if (!kioskDevice) return null;
+  const np = kioskDevice.now_playing;
+  const effectiveSeries = np?.series_name ?? null;
+  const lookupTitle = effectiveSeries ?? np?.title ?? null;
+  const mediaType: 'movie' | 'show' = effectiveSeries ? 'show' : 'movie';
+  return (
+    <CinematicKioskView
+      deviceName={kioskDevice.name}
+      nowPlaying={np}
+      lookupTitle={lookupTitle}
+      mediaType={mediaType}
+      effectiveSeries={effectiveSeries}
+      orientation={orientation}
+      kioskActive={kioskActive}
+      onClose={onClose}
+    />
   );
 }
 

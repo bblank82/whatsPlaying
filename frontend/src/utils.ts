@@ -105,3 +105,18 @@ export const YOUTUBE_APP_IDS = new Set([
   'com.apple.TVYouTube',
   'com.google.ios.youtube',
 ]);
+
+// Fetch album art from the iTunes Search API (no API key required).
+// Returns a 600x600 artwork URL, or null if nothing found.
+export async function fetchItunesAlbumArt(artist: string | null, album: string | null, title: string | null): Promise<string | null> {
+  const term = [artist, album ?? title].filter(Boolean).join(' ');
+  if (!term) return null;
+  try {
+    const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=album&limit=1`);
+    const data = await res.json();
+    const raw: string | undefined = data?.results?.[0]?.artworkUrl100;
+    return raw ? raw.replace('100x100bb', '600x600bb') : null;
+  } catch {
+    return null;
+  }
+}

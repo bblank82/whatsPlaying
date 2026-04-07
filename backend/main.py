@@ -799,6 +799,13 @@ async def get_rt_scores(title: str, media_type: str = "movie", force_media_type:
     return {"tomatometer": None, "audience_score": None, "url": rt_search_url}
 
 
+async def _tmdb_match(client, title: str, media_type: str, force_hint: bool = False):
+    """Clean title, resolve via TMDB. Returns (cleaned_title, kind, tmdb_id, imdb_id, year) or None."""
+    cleaned = _clean_title(title)
+    kind, tmdb_id, imdb_id, year = await _tmdb_best(client, cleaned, media_type, force_hint=force_hint)
+    return (cleaned, kind, tmdb_id, imdb_id, year) if tmdb_id else None
+
+
 async def _find_season_by_episode(client, tmdb_id: int, episode_title: str) -> Optional[int]:
     """Search a TV show's seasons on TMDB to find which season contains the given episode title.
 
@@ -842,12 +849,12 @@ async def get_tmdb(title: str, media_type: str = "movie", force_media_type: bool
     """
     if not TMDB_API_KEY:
         return {"available": False}
-    title = _clean_title(title)
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            kind, tmdb_id, _imdb_id, _year = await _tmdb_best(client, title, media_type, force_hint=force_media_type)
-            if not tmdb_id:
+            match = await _tmdb_match(client, title, media_type, force_hint=force_media_type)
+            if not match:
                 return {"available": False}
+            title, kind, tmdb_id, _imdb_id, _year = match
 
             poster = None
 
@@ -903,12 +910,12 @@ async def get_tmdb_details(title: str, media_type: str = "movie", force_media_ty
     """
     if not TMDB_API_KEY:
         return {"available": False}
-    title = _clean_title(title)
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            kind, tmdb_id, _imdb_id, _year = await _tmdb_best(client, title, media_type, force_hint=force_media_type)
-            if not tmdb_id:
+            match = await _tmdb_match(client, title, media_type, force_hint=force_media_type)
+            if not match:
                 return {"available": False}
+            title, kind, tmdb_id, _imdb_id, _year = match
 
             detail = await client.get(
                 f"https://api.themoviedb.org/3/{kind}/{tmdb_id}",

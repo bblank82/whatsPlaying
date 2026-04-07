@@ -3,8 +3,9 @@ import type { DeviceStatus } from '../types';
 import { NowPlaying } from './NowPlaying';
 import { RemoteModal } from './RemoteModal';
 import { CinematicKioskView } from './CinematicKioskView';
-import { parseHuluTitle, parsePlexTitle, detectPlexSeries, isGenericVideoTitle, ARTIST_AS_SERIES_APP_IDS, YOUTUBE_APP_IDS } from '../utils';
 import { useDebug } from '../contexts/debug';
+import { parseContentMetadata, useScores, useContentArtwork } from '../hooks/useContentData';
+import type { ScoreState } from '../hooks/useContentData';
 
 // ---------------------------------------------------------------------------
 // Device icon
@@ -90,13 +91,6 @@ function ControlButton({
 // Scores / external links row
 // ---------------------------------------------------------------------------
 
-interface ScoreState {
-  tomatometer: number | null;
-  audience_score: number | null;
-  url: string | null;
-  imdb_id: string | null;
-  imdb_rating: string | null;
-}
 
 function TomatoIcon({ fresh }: { fresh: boolean }) {
   return fresh ? (
@@ -178,144 +172,28 @@ export function DeviceCard({ device, onPair, isDemo }: Props) {
   const isPaused  = effectiveDeviceState.toLowerCase().includes('paused');
   const showControls = connected && (isPlaying || isPaused);
 
-  // Device artwork URL
-  const artworkCacheKey = now_playing?.artwork_id ?? now_playing?.title ?? null;
-  const [artworkUrl, setArtworkUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if ((!isPlaying && !isPaused) || !connected) { setArtworkUrl(null); return; }
-    const v = encodeURIComponent(artworkCacheKey ?? 'playing');
-    setArtworkUrl(`/api/devices/${encodeURIComponent(identifier)}/artwork?v=${v}`);
-  }, [artworkCacheKey, isPlaying, isPaused, connected, identifier]);
-
-  // ── Compound title parsing ─────────────────────────────────────────────────
-  const appId = now_playing?.app_id ?? null;
-
-  // YouTube: no TMDB/scores lookups; uses separate thumbnail fetch
-  const isYouTube = YOUTUBE_APP_IDS.has(appId ?? '');
-
-  // Hulu embeds "Series | S5 E8 - Episode Title" in the title field
-  const huluMatch = appId === 'com.hulu.plus' ? parseHuluTitle(now_playing?.title ?? '') : null;
-
-  // Apps where artist=series and title=episode, identified by app_id
-  const artistIsSeriesByAppId = ARTIST_AS_SERIES_APP_IDS.has(appId ?? '') && !!now_playing?.artist;
-
-  // Plex / Infuse: detected from structural metadata (album="Season N" or S1·E1 title format)
-  const artistAsSeries =
-    artistIsSeriesByAppId ? (now_playing?.artist ?? null) :
-    detectPlexSeries(now_playing?.title ?? null, now_playing?.album ?? null, now_playing?.artist ?? null);
-
-  // For Plex, parse the structured title to extract clean S/E numbers and episode name
-  const plexTitle = artistAsSeries && !artistIsSeriesByAppId
-    ? parsePlexTitle(now_playing?.title ?? null)
-    : null;
-
-  // Resolved fields — prefer native pyatv fields, then parsed, then raw
-  const effectiveSeries: string | null =
-    now_playing?.series_name ?? huluMatch?.series ?? artistAsSeries;
-
-  const effectiveSeason: number | null =
-    now_playing?.season_number ?? huluMatch?.season ?? plexTitle?.season ?? null;
-
-  const effectiveEpisode: number | null =
-    now_playing?.episode_number ?? huluMatch?.episode ?? plexTitle?.episode ?? null;
-
-  const effectiveEpisodeTitle: string | null =
-    huluMatch ? huluMatch.episodeTitle :
-    plexTitle ? plexTitle.episodeTitle :
-    artistIsSeriesByAppId ? now_playing?.title ?? null :
-    null;
-
-  const isGenericTitle = isGenericVideoTitle(now_playing?.title ?? null);
-
-  // YouTube content should never trigger TMDB/RT lookups (channel names don't resolve).
-  const isVideo = !isGenericTitle && !isYouTube && !!(
-    effectiveSeries ||
-    effectiveSeason != null ||
-    (now_playing?.media_type?.toLowerCase().includes('video') && now_playing?.title)
-  );
-  const lookupTitle = effectiveSeries ?? now_playing?.title ?? null;
-  const mediaTypeForApi = effectiveSeries ? 'show' : 'movie';
-  // Force the media type when we're confident — prevents popularity-based mismatches
-  // (e.g. "21" resolving to a TV show instead of the 2008 film).
-  // Confident when: no series data and media_type is explicitly Video.
-  const forceMediaType = !effectiveSeries && now_playing?.media_type === 'MediaType.Video';
-
-  // RT scores
-  const [scores, setScores] = useState<ScoreState | null>(null);
+// ── Content metadata (title parsing, series detection) ────────────────────
   const isActive = isPlaying || isPaused;
+  const {
+    effectiveSeries, effectiveSeason, effectiveEpisode, effectiveEpisodeTitle,
+    isYouTube, isVideo, isMusic, lookupTitle, mediaTypeForApi, forceMediaType, huluMatch,
+  } = parseContentMetadata(now_playing);
 
-  useEffect(() => {
-    if (!lookupTitle || !isVideo || !isActive) { setScores(null); return; }
-    setScores(null);
-    const params = new URLSearchParams({ title: lookupTitle, media_type: mediaTypeForApi });
-    if (forceMediaType) params.set('force_media_type', 'true');
-    fetch(`/api/scores?${params}`)
-      .then(r => r.json()).then(setScores).catch(() => {});
-  }, [lookupTitle, mediaTypeForApi, forceMediaType, isVideo, isActive]);
+  // RT/IMDb scores
+  const scores: ScoreState | null = useScores(lookupTitle, mediaTypeForApi, forceMediaType, isVideo, isActive);
 
-  // TMDB poster (w500 for card thumbnail, original for modal)
-  const [tmdbPosterUrl, setTmdbPosterUrl]     = useState<string | null>(null);
-  const [tmdbFullsizeUrl, setTmdbFullsizeUrl] = useState<string | null>(null);
-  const [tmdbResolved, setTmdbResolved]       = useState(false);
-  useEffect(() => {
-    if (!lookupTitle || !isVideo || !isActive) {
-      setTmdbPosterUrl(null); setTmdbFullsizeUrl(null); setTmdbResolved(false); return;
-    }
-    setTmdbResolved(false);
-    const params = new URLSearchParams({ title: lookupTitle, media_type: mediaTypeForApi });
-    if (forceMediaType) params.set('force_media_type', 'true');
-    if (effectiveSeason != null) params.set('season_number', String(effectiveSeason));
-    // When looking up by series name, pass the episode title so the backend can
-    // infer the season when season_number isn't in the metadata (e.g. HBO Max)
-    if (effectiveSeries && now_playing?.title && effectiveSeason == null) {
-      params.set('episode_title', now_playing.title);
-    }
-    fetch(`/api/tmdb?${params}`)
-      .then(r => r.json()).then(d => {
-        setTmdbPosterUrl(d.poster_url ?? null);
-        setTmdbFullsizeUrl(d.fullsize_url ?? null);
-      }).catch(() => {})
-      .finally(() => setTmdbResolved(true));
-  }, [lookupTitle, mediaTypeForApi, forceMediaType, effectiveSeason, now_playing?.title, isVideo, isActive]);
-  // App icon from iTunes — fetched when active and no content artwork is available
-  const [appIconUrl, setAppIconUrl] = useState<string | null>(null);
-  useEffect(() => {
-    const appId = now_playing?.app_id ?? null;
-    if (!appId || !isActive) { setAppIconUrl(null); return; }
-    fetch(`/api/app_icon?bundle_id=${encodeURIComponent(appId)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setAppIconUrl(d?.url ?? null))
-      .catch(() => {});
-  }, [now_playing?.app_id, isActive]);
-
-  const [ytThumbUrl, setYtThumbUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!isYouTube || !isActive || !now_playing?.title) { setYtThumbUrl(null); return; }
-    const params = new URLSearchParams({ title: now_playing.title });
-    if (now_playing.artist) params.set('channel', now_playing.artist);
-    fetch(`/api/youtube_thumbnail?${params}`)
-      .then(r => r.json()).then(d => setYtThumbUrl(d.thumbnail_url ?? null)).catch(() => {});
-  }, [isYouTube, isActive, now_playing?.title, now_playing?.artist]);
-
-  // iTunes album art — for music content without native artwork
-  const isMusic = now_playing?.media_type?.toLowerCase().includes('music') ?? false;
-  const [itunesArtUrl, setItunesArtUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!isMusic || !isActive) { setItunesArtUrl(null); return; }
-    const term = [now_playing?.artist, now_playing?.album ?? now_playing?.title].filter(Boolean).join(' ');
-    if (!term) return;
-    fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=album&limit=1`)
-      .then(r => r.json())
-      .then(d => {
-        const raw: string | undefined = d?.results?.[0]?.artworkUrl100;
-        if (raw) setItunesArtUrl(raw.replace('100x100bb', '600x600bb'));
-      })
-      .catch(() => {});
-  }, [isMusic, isActive, now_playing?.artist, now_playing?.album, now_playing?.title]);
+  // All artwork sources
+  const { cardArtworkSrc, artworkFullscreenSrc, appIconUrl } = useContentArtwork({
+    identifier, connected, isPlaying, isPaused, isActive,
+    isVideo, isYouTube, isMusic, now_playing,
+    lookupTitle, mediaTypeForApi, forceMediaType, effectiveSeries, effectiveSeason,
+  });
 
   // Modal state
-  const [showRemote, setShowRemote]   = useState(false);
-  const [showArtwork, setShowArtwork] = useState(false);
+  const [showRemote, setShowRemote]           = useState(false);
+  const [showArtwork, setShowArtwork]         = useState(false);
+  const [artworkImgError, setArtworkImgError] = useState(false);
+  useEffect(() => { setArtworkImgError(false); }, [cardArtworkSrc]);
 
   // Merge optimistic overrides + parsed compound-title fields into nowPlaying
   const effectiveNowPlaying = (() => {
@@ -343,16 +221,6 @@ export function DeviceCard({ device, onPair, isDemo }: Props) {
     await fetch(`/api/devices/${encodeURIComponent(identifier)}/control/${action}`, { method: 'POST' });
   }
 
-  // Kaleidescape serves its own cover art directly — authoritative; don't let TMDB override it
-  const kscapeCoverUrl = now_playing?.kscape_cover_url ?? null;
-
-  // Suppress pyatv artwork while TMDB is in-flight for video content — avoids the
-  // flash of wrong art before the poster loads.
-  const artworkFallback = (isVideo && !tmdbResolved) ? null : (kscapeCoverUrl ?? artworkUrl);
-  // When Kaleidescape provides its own cover art, use it directly (TMDB title search is
-  // unreliable for sequels/subtitles and could return the wrong movie).
-  const cardArtworkSrc      = kscapeCoverUrl ?? tmdbPosterUrl ?? itunesArtUrl ?? ytThumbUrl ?? artworkFallback;
-  const artworkFullscreenSrc = kscapeCoverUrl ?? tmdbFullsizeUrl ?? itunesArtUrl ?? ytThumbUrl ?? artworkFallback;
 
   const borderColor = connected
     ? isPlaying ? 'rgba(48,209,88,0.35)' : 'rgba(255,255,255,0.1)'
@@ -454,12 +322,12 @@ export function DeviceCard({ device, onPair, isDemo }: Props) {
                     cursor: artworkFullscreenSrc ? 'pointer' : 'default',
                   }}
                 >
-                  {cardArtworkSrc ? (
+                  {cardArtworkSrc && !artworkImgError ? (
                     <img
                       src={cardArtworkSrc}
                       alt=""
                       style={{ height: 80, width: 'auto', display: 'block' }}
-                      onError={() => { if (tmdbPosterUrl) setTmdbPosterUrl(null); else if (ytThumbUrl) setYtThumbUrl(null); else setArtworkUrl(null); }}
+                      onError={() => setArtworkImgError(true)}
                     />
                   ) : (isPlaying || isPaused) && appIconUrl ? (
                     <img src={appIconUrl} alt="" style={{ width: 80, height: 80, objectFit: 'cover', display: 'block' }} />
@@ -476,7 +344,7 @@ export function DeviceCard({ device, onPair, isDemo }: Props) {
                       debug.log('send', `set_position pos=${pos}`, name);
                       fetch(`/api/devices/${encodeURIComponent(identifier)}/control/set_position?pos=${pos}`, { method: 'POST' });
                     }}
-                    resolvedSeries={artistAsSeries}
+                    resolvedSeries={effectiveSeries}
                     belowBar={isVideo && scores ? <ScoresRow scores={scores} /> : undefined}
                   />
                 </div>

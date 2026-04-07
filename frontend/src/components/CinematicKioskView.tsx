@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { NowPlaying } from '../types';
+import { formatTime, fetchItunesAlbumArt } from '../utils';
+import type { ScoreState } from '../hooks/useContentData';
 
 interface CastMember {
   name: string;
@@ -20,14 +22,6 @@ interface TmdbDetails {
   backdrop_url: string | null;
 }
 
-interface ScoreState {
-  tomatometer: number | null;
-  audience_score: number | null;
-  url: string | null;
-  imdb_id: string | null;
-  imdb_rating: string | null;
-}
-
 export interface CinematicKioskProps {
   deviceName: string;
   nowPlaying: NowPlaying | null;
@@ -40,20 +34,103 @@ export interface CinematicKioskProps {
   onClose: () => void;
 }
 
-function formatTime(s: number | null): string {
-  if (s == null) return '';
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = Math.floor(s % 60);
-  return h > 0
-    ? `${h}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
-    : `${m}:${sec.toString().padStart(2, '0')}`;
-}
 
 function formatRuntime(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+}
+
+// ---------------------------------------------------------------------------
+// Shared sub-components (used in both portrait and landscape layouts)
+// ---------------------------------------------------------------------------
+
+function NowPlayingLabel({ deviceName, isPortrait }: { deviceName: string; isPortrait: boolean }) {
+  const size = isPortrait ? 11 : 13;
+  const mb = isPortrait ? '2vmin' : '3.5vmin';
+  const fontSize = isPortrait ? 'clamp(10px, 1.8vmin, 15px)' : 'clamp(11px, 2vmin, 17px)';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '1vmin', marginBottom: mb }}>
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="rgba(255,255,255,0.45)" stroke="none">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+      </svg>
+      <span style={{ fontSize, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.02em' }}>
+        Now Playing on{' '}
+        <span style={{ color: 'rgba(255,255,255,0.82)', fontWeight: 600 }}>{deviceName}</span>
+      </span>
+    </div>
+  );
+}
+
+function KioskScores({ scores, imdbUrl, isPortrait }: {
+  scores: ScoreState;
+  imdbUrl: string | null;
+  isPortrait: boolean;
+}) {
+  if (scores.tomatometer == null && !scores.imdb_rating) return null;
+  const pad = isPortrait ? '4px 10px' : '5px 11px';
+  const tomSize = isPortrait ? 'clamp(12px, 2.3vmin, 17px)' : 'clamp(13px, 2.5vmin, 19px)';
+  const scoreSize = isPortrait ? 'clamp(11px, 2.1vmin, 16px)' : 'clamp(12px, 2.3vmin, 18px)';
+  const mb = isPortrait ? '1.5vmin' : '1.5vmin';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '1.5vmin', marginBottom: mb }}>
+      {scores.tomatometer != null && (
+        <a href={scores.url ?? '#'} target="_blank" rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          style={{ display: 'flex', alignItems: 'center', gap: '0.8vmin', textDecoration: 'none',
+            background: 'rgba(255,255,255,0.08)', borderRadius: 9, padding: pad,
+            border: '1px solid rgba(255,255,255,0.12)' }}>
+          <span style={{ fontSize: tomSize }}>{scores.tomatometer >= 60 ? '🍅' : '🤢'}</span>
+          <span style={{ fontSize: scoreSize, fontWeight: 700,
+            color: scores.tomatometer >= 60 ? '#FF3B30' : '#8E8E93' }}>
+            {scores.tomatometer}%
+          </span>
+        </a>
+      )}
+      {scores.imdb_rating && imdbUrl && (
+        <a href={imdbUrl} target="_blank" rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          style={{ display: 'flex', alignItems: 'center', gap: '0.8vmin', textDecoration: 'none',
+            background: 'rgba(255,255,255,0.08)', borderRadius: 9, padding: pad,
+            border: '1px solid rgba(255,255,255,0.12)' }}>
+          <svg width="28" height="14" viewBox="0 0 44 22" fill="none">
+            <rect width="44" height="22" rx="3" fill="#F5C518"/>
+            <text x="22" y="16" fontSize="13" fontWeight="800" fill="#000" textAnchor="middle" fontFamily="Arial,sans-serif">IMDb</text>
+          </svg>
+          <span style={{ fontSize: scoreSize, fontWeight: 700, color: '#F5C518' }}>
+            {scores.imdb_rating}
+          </span>
+        </a>
+      )}
+    </div>
+  );
+}
+
+function KioskProgressBar({ pct, livePos, total_time, isPortrait }: {
+  pct: number;
+  livePos: number | null;
+  total_time: number | null | undefined;
+  isPortrait: boolean;
+}) {
+  const fontSize = isPortrait ? 'clamp(9px, 1.6vmin, 13px)' : 'clamp(10px, 1.7vmin, 14px)';
+  return (
+    <div>
+      <div style={{ height: 3, background: 'rgba(255,255,255,0.13)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: 'rgba(255,255,255,0.72)',
+          borderRadius: 2, transition: 'width 1s linear' }} />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.8vmin' }}>
+        <span style={{ fontSize, color: 'rgba(255,255,255,0.28)', fontVariantNumeric: 'tabular-nums' }}>
+          {formatTime(livePos)}
+        </span>
+        {livePos != null && total_time != null && (
+          <span style={{ fontSize, color: 'rgba(255,255,255,0.28)', fontVariantNumeric: 'tabular-nums' }}>
+            −{formatTime(total_time - livePos)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -168,17 +245,8 @@ export function CinematicKioskView({
   // Fetch album art from iTunes Search API
   useEffect(() => {
     if (!isMusic) { setAlbumArtUrl(null); return; }
-    const { artist, album, title } = nowPlaying ?? {};
-    const term = [artist, album ?? title].filter(Boolean).join(' ');
-    if (!term) return;
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=album&limit=1`;
-    fetch(url)
-      .then(r => r.json())
-      .then(data => {
-        const raw: string | undefined = data?.results?.[0]?.artworkUrl100;
-        if (raw) setAlbumArtUrl(raw.replace('100x100bb', '600x600bb'));
-      })
-      .catch(() => {});
+    fetchItunesAlbumArt(nowPlaying?.artist ?? null, nowPlaying?.album ?? null, nowPlaying?.title ?? null)
+      .then(url => setAlbumArtUrl(url));
   }, [isMusic, nowPlaying?.artist, nowPlaying?.album, nowPlaying?.title]);
 
   // Fetch TMDB details (overview, cast, genres, etc.) — skip for music
@@ -514,23 +582,7 @@ export function CinematicKioskView({
               display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
             }}>
 
-              {/* Device name */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '1vmin',
-                marginBottom: '2vmin',
-              }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="rgba(255,255,255,0.45)" stroke="none">
-                  <polygon points="5 3 19 12 5 21 5 3"/>
-                </svg>
-                <span style={{
-                  fontSize: 'clamp(10px, 1.8vmin, 15px)',
-                  color: 'rgba(255,255,255,0.45)',
-                  letterSpacing: '0.02em',
-                }}>
-                  Now Playing on{' '}
-                  <span style={{ color: 'rgba(255,255,255,0.82)', fontWeight: 600 }}>{deviceName}</span>
-                </span>
-              </div>
+              <NowPlayingLabel deviceName={deviceName} isPortrait={true} />
 
               {/* Primary title */}
               {primaryTitle && (
@@ -619,76 +671,8 @@ export function CinematicKioskView({
                 </div>
               )}
 
-              {/* Scores */}
-              {scores && (scores.tomatometer != null || scores.imdb_rating) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1.5vmin', marginBottom: '1.5vmin' }}>
-                  {scores.tomatometer != null && (
-                    <a href={scores.url ?? '#'} target="_blank" rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '0.8vmin',
-                        textDecoration: 'none',
-                        background: 'rgba(255,255,255,0.08)',
-                        borderRadius: 9, padding: '4px 10px',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                      }}>
-                      <span style={{ fontSize: 'clamp(12px, 2.3vmin, 17px)' }}>
-                        {scores.tomatometer >= 60 ? '🍅' : '🤢'}
-                      </span>
-                      <span style={{
-                        fontSize: 'clamp(11px, 2.1vmin, 16px)', fontWeight: 700,
-                        color: scores.tomatometer >= 60 ? '#FF3B30' : '#8E8E93',
-                      }}>{scores.tomatometer}%</span>
-                    </a>
-                  )}
-                  {scores.imdb_rating && imdbUrl && (
-                    <a href={imdbUrl} target="_blank" rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '0.8vmin',
-                        textDecoration: 'none',
-                        background: 'rgba(255,255,255,0.08)',
-                        borderRadius: 9, padding: '4px 10px',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                      }}>
-                      <svg width="28" height="14" viewBox="0 0 44 22" fill="none">
-                        <rect width="44" height="22" rx="3" fill="#F5C518"/>
-                        <text x="22" y="16" fontSize="13" fontWeight="800" fill="#000" textAnchor="middle" fontFamily="Arial,sans-serif">IMDb</text>
-                      </svg>
-                      <span style={{ fontSize: 'clamp(11px, 2.1vmin, 16px)', fontWeight: 700, color: '#F5C518' }}>
-                        {scores.imdb_rating}
-                      </span>
-                    </a>
-                  )}
-                </div>
-              )}
-
-              {/* Progress bar */}
-              {pct != null && (
-                <div>
-                  <div style={{ height: 3, background: 'rgba(255,255,255,0.13)', borderRadius: 2, overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%', width: `${pct}%`,
-                      background: 'rgba(255,255,255,0.72)', borderRadius: 2,
-                      transition: 'width 1s linear',
-                    }} />
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.8vmin' }}>
-                    <span style={{
-                      fontSize: 'clamp(9px, 1.6vmin, 13px)',
-                      color: 'rgba(255,255,255,0.28)',
-                      fontVariantNumeric: 'tabular-nums',
-                    }}>{formatTime(livePos)}</span>
-                    {livePos != null && total_time != null && (
-                      <span style={{
-                        fontSize: 'clamp(9px, 1.6vmin, 13px)',
-                        color: 'rgba(255,255,255,0.28)',
-                        fontVariantNumeric: 'tabular-nums',
-                      }}>−{formatTime(total_time - livePos)}</span>
-                    )}
-                  </div>
-                </div>
-              )}
+              {scores && <KioskScores scores={scores} imdbUrl={imdbUrl} isPortrait={true} />}
+              {pct != null && <KioskProgressBar pct={pct} livePos={livePos} total_time={total_time} isPortrait={true} />}
 
             </div>
           </div>
@@ -750,23 +734,7 @@ export function CinematicKioskView({
               scrollbarWidth: 'none',
             }}>
 
-              {/* Device name */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '1vmin',
-                marginBottom: '3.5vmin',
-              }}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="rgba(255,255,255,0.45)" stroke="none">
-                  <polygon points="5 3 19 12 5 21 5 3"/>
-                </svg>
-                <span style={{
-                  fontSize: 'clamp(11px, 2vmin, 17px)',
-                  color: 'rgba(255,255,255,0.45)',
-                  letterSpacing: '0.02em',
-                }}>
-                  Now Playing on{' '}
-                  <span style={{ color: 'rgba(255,255,255,0.82)', fontWeight: 600 }}>{deviceName}</span>
-                </span>
-              </div>
+              <NowPlayingLabel deviceName={deviceName} isPortrait={false} />
 
               {/* Primary title */}
               {primaryTitle && (
@@ -887,90 +855,8 @@ export function CinematicKioskView({
               {/* Spacer pushes scores+progress to bottom */}
               <div style={{ flex: 1 }} />
 
-              {/* Scores */}
-              {scores && (scores.tomatometer != null || scores.imdb_rating) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1.5vmin', marginBottom: '1.5vmin' }}>
-                  {scores.tomatometer != null && (
-                    <a
-                      href={scores.url ?? '#'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '0.8vmin',
-                        textDecoration: 'none',
-                        background: 'rgba(255,255,255,0.08)',
-                        borderRadius: 9, padding: '5px 11px',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                      }}
-                    >
-                      <span style={{ fontSize: 'clamp(13px, 2.5vmin, 19px)' }}>
-                        {scores.tomatometer >= 60 ? '🍅' : '🤢'}
-                      </span>
-                      <span style={{
-                        fontSize: 'clamp(12px, 2.3vmin, 18px)', fontWeight: 700,
-                        color: scores.tomatometer >= 60 ? '#FF3B30' : '#8E8E93',
-                      }}>
-                        {scores.tomatometer}%
-                      </span>
-                    </a>
-                  )}
-                  {scores.imdb_rating && imdbUrl && (
-                    <a
-                      href={imdbUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={e => e.stopPropagation()}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '0.8vmin',
-                        textDecoration: 'none',
-                        background: 'rgba(255,255,255,0.08)',
-                        borderRadius: 9, padding: '5px 11px',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                      }}
-                    >
-                      <svg width="28" height="14" viewBox="0 0 44 22" fill="none">
-                        <rect width="44" height="22" rx="3" fill="#F5C518"/>
-                        <text x="22" y="16" fontSize="13" fontWeight="800" fill="#000" textAnchor="middle" fontFamily="Arial,sans-serif">IMDb</text>
-                      </svg>
-                      <span style={{ fontSize: 'clamp(12px, 2.3vmin, 18px)', fontWeight: 700, color: '#F5C518' }}>
-                        {scores.imdb_rating}
-                      </span>
-                    </a>
-                  )}
-                </div>
-              )}
-
-              {/* Progress bar */}
-              {pct != null && (
-                <div>
-                  <div style={{ height: 3, background: 'rgba(255,255,255,0.13)', borderRadius: 2, overflow: 'hidden' }}>
-                    <div style={{
-                      height: '100%', width: `${pct}%`,
-                      background: 'rgba(255,255,255,0.72)', borderRadius: 2,
-                      transition: 'width 1s linear',
-                    }} />
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.8vmin' }}>
-                    <span style={{
-                      fontSize: 'clamp(10px, 1.7vmin, 14px)',
-                      color: 'rgba(255,255,255,0.28)',
-                      fontVariantNumeric: 'tabular-nums',
-                    }}>
-                      {formatTime(livePos)}
-                    </span>
-                    {livePos != null && total_time != null && (
-                      <span style={{
-                        fontSize: 'clamp(10px, 1.7vmin, 14px)',
-                        color: 'rgba(255,255,255,0.28)',
-                        fontVariantNumeric: 'tabular-nums',
-                      }}>
-                        −{formatTime(total_time - livePos)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
+              {scores && <KioskScores scores={scores} imdbUrl={imdbUrl} isPortrait={false} />}
+              {pct != null && <KioskProgressBar pct={pct} livePos={livePos} total_time={total_time} isPortrait={false} />}
 
             </div>
           </div>
