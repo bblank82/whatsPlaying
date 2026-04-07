@@ -2,97 +2,96 @@
  * Demo mode API mock — intercepts all /api/* fetch calls and returns hardcoded
  * responses so the demo works without a running backend.
  *
- * TMDB images are served from image.tmdb.org (no API key required for delivery).
- * If a path is stale/wrong the image 404s silently — the UI shows the
- * no-artwork placeholder, which is the same as the pre-mock broken state.
+ * Data sourced directly from the local API (TMDB + scores) so it matches
+ * exactly what the real app would show.
  *
  * Install before mounting the React tree:
  *   import { installDemoMock } from './demo/mockApi';
  *   installDemoMock();
  */
 
-const T = 'https://image.tmdb.org/t/p';
+interface CastMember { name: string; character: string; profile_url: string | null; }
 
 interface DemoContent {
-  poster: string;
-  fullsize: string;
-  backdrop: string;
+  poster_url: string;
+  fullsize_url: string;
+  backdrop_url: string;
   year: number;
-  runtime: number;
+  runtime: number | null;
   genres: string[];
   overview: string;
   tagline: string;
   vote_average: number;
-  cast: Array<{ name: string; character: string }>;
-  tomatometer: number;
-  audience_score: number;
-  rt_url: string;
-  imdb_id: string;
-  imdb_rating: string;
+  cast: CastMember[];
+  tomatometer: number | null;
+  audience_score: number | null;
+  rt_url: string | null;
+  imdb_id: string | null;
+  imdb_rating: string | null;
 }
 
 const CONTENT: Record<string, DemoContent> = {
   'the dark knight': {
-    poster:   `${T}/w500/qJ2tW6WMkB3jJzeTkHfSFdTmf6H.jpg`,
-    fullsize: `${T}/original/qJ2tW6WMkB3jJzeTkHfSFdTmf6H.jpg`,
-    backdrop: `${T}/original/nMKdUUepR0i5zn0y1T4CejMmVws.jpg`,
+    poster_url:   'https://image.tmdb.org/t/p/w500/qJ2tW6WMUDux911r6m7haRef0WH.jpg',
+    fullsize_url: 'https://image.tmdb.org/t/p/original/qJ2tW6WMUDux911r6m7haRef0WH.jpg',
+    backdrop_url: 'https://image.tmdb.org/t/p/original/cfT29Im5VDvjE0RpyKOSdCKZal7.jpg',
     year: 2008, runtime: 152,
-    genres: ['Action', 'Crime', 'Drama'],
+    genres: ['Action', 'Crime', 'Thriller'],
     tagline: 'Welcome to a world without rules.',
-    overview: 'When the menace known as the Joker wreaks havoc and chaos on the people of Gotham, Batman must accept one of the greatest psychological and physical tests of his ability to fight injustice.',
-    vote_average: 9.0,
+    overview: 'Batman raises the stakes in his war on crime. With the help of Lt. Jim Gordon and District Attorney Harvey Dent, Batman sets out to dismantle the remaining criminal organizations that plague the streets. The partnership proves to be effective, but they soon find themselves prey to a reign of chaos unleashed by a rising criminal mastermind known to the terrified citizens of Gotham as the Joker.',
+    vote_average: 8.5,
     cast: [
-      { name: 'Christian Bale',  character: 'Bruce Wayne / Batman' },
-      { name: 'Heath Ledger',    character: 'Joker' },
-      { name: 'Aaron Eckhart',   character: 'Harvey Dent / Two-Face' },
-      { name: 'Michael Caine',   character: 'Alfred' },
-      { name: 'Gary Oldman',     character: 'Lt. James Gordon' },
+      { name: 'Christian Bale',    character: 'Bruce Wayne',  profile_url: 'https://image.tmdb.org/t/p/w185/7Pxez9J8fuPd2Mn9kex13YALrCQ.jpg' },
+      { name: 'Heath Ledger',      character: 'Joker',        profile_url: 'https://image.tmdb.org/t/p/w185/AdWKVqyWpkYSfKE5Gb2qn8JzHni.jpg' },
+      { name: 'Aaron Eckhart',     character: 'Harvey Dent',  profile_url: 'https://image.tmdb.org/t/p/w185/u5JjnRMr9zKEVvOP7k3F6gdcwT6.jpg' },
+      { name: 'Michael Caine',     character: 'Alfred',       profile_url: 'https://image.tmdb.org/t/p/w185/bVZRMlpjTAO2pJK6v90buFgVbSW.jpg' },
+      { name: 'Maggie Gyllenhaal', character: 'Rachel',       profile_url: 'https://image.tmdb.org/t/p/w185/vsfkWdYWmA9CpzMHTJzrFxlDnEZ.jpg' },
     ],
-    tomatometer: 94, audience_score: 94,
+    tomatometer: 94, audience_score: null,
     rt_url: 'https://www.rottentomatoes.com/m/the_dark_knight',
-    imdb_id: 'tt0468569', imdb_rating: '9.0',
+    imdb_id: 'tt0468569', imdb_rating: '9.1',
   },
 
   'dune: part two': {
-    poster:   `${T}/w500/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg`,
-    fullsize: `${T}/original/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg`,
-    backdrop: `${T}/original/xOMo8BRK7PfcJv9JCnx7s5hj0PX.jpg`,
+    poster_url:   'https://image.tmdb.org/t/p/w500/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg',
+    fullsize_url: 'https://image.tmdb.org/t/p/original/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg',
+    backdrop_url: 'https://image.tmdb.org/t/p/original/eZ239CUp1d6OryZEBPnO2n87gMG.jpg',
     year: 2024, runtime: 167,
-    genres: ['Science Fiction', 'Adventure', 'Drama'],
+    genres: ['Science Fiction', 'Adventure'],
     tagline: 'Long live the fighters.',
-    overview: "Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family. Facing a choice between the love of his life and the fate of the universe, he must prevent a terrible future only he can foresee.",
-    vote_average: 8.5,
+    overview: 'Follow the mythic journey of Paul Atreides as he unites with Chani and the Fremen while on a path of revenge against the conspirators who destroyed his family. Facing a choice between the love of his life and the fate of the known universe, Paul endeavors to prevent a terrible future only he can foresee.',
+    vote_average: 8.1,
     cast: [
-      { name: 'Timothée Chalamet', character: 'Paul Atreides' },
-      { name: 'Zendaya',           character: 'Chani' },
-      { name: 'Rebecca Ferguson',  character: 'Lady Jessica' },
-      { name: 'Austin Butler',     character: 'Feyd-Rautha Harkonnen' },
-      { name: 'Florence Pugh',     character: 'Princess Irulan' },
+      { name: 'Timothée Chalamet', character: 'Paul Atreides',       profile_url: 'https://image.tmdb.org/t/p/w185/axENiFIrSz5B7UuWkMT7PDe7CaO.jpg' },
+      { name: 'Zendaya',           character: 'Chani',               profile_url: 'https://image.tmdb.org/t/p/w185/3WdOloHpjtjL96uVOhFRRCcYSwq.jpg' },
+      { name: 'Rebecca Ferguson',  character: 'Jessica',             profile_url: 'https://image.tmdb.org/t/p/w185/lJloTOheuQSirSLXNA3JHsrMNfH.jpg' },
+      { name: 'Javier Bardem',     character: 'Stilgar',             profile_url: 'https://image.tmdb.org/t/p/w185/p5xjCovj1uzvA2SXrWLH78Nh1Jf.jpg' },
+      { name: 'Austin Butler',     character: 'Feyd-Rautha',         profile_url: 'https://image.tmdb.org/t/p/w185/atdAs4pFGjUQ4m2W8kJYly7N6cC.jpg' },
     ],
-    tomatometer: 90, audience_score: 96,
+    tomatometer: 92, audience_score: null,
     rt_url: 'https://www.rottentomatoes.com/m/dune_part_two',
-    imdb_id: 'tt15239678', imdb_rating: '8.5',
+    imdb_id: 'tt15239678', imdb_rating: '8.4',
   },
 
   'succession': {
-    poster:   `${T}/w500/e2X8zRGkSsq11AKsFHG7DKScFRQ.jpg`,
-    fullsize: `${T}/original/e2X8zRGkSsq11AKsFHG7DKScFRQ.jpg`,
-    backdrop: `${T}/original/eSLT9MCZE5V3ydSJkxiZ7TRh6jS.jpg`,
-    year: 2018, runtime: 60,
-    genres: ['Drama'],
-    tagline: '',
-    overview: "The Roy family controls one of the biggest media and entertainment conglomerates in the world. This is the story of their fight over who will succeed their aging patriarch.",
-    vote_average: 8.9,
+    poster_url:   'https://image.tmdb.org/t/p/w500/z0XiwdrCQ9yVIr4O0pxzaAYRxdW.jpg',
+    fullsize_url: 'https://image.tmdb.org/t/p/original/z0XiwdrCQ9yVIr4O0pxzaAYRxdW.jpg',
+    backdrop_url: 'https://image.tmdb.org/t/p/original/bcdUYUFk8GdpZJPiSAas9UeocLH.jpg',
+    year: 2018, runtime: null,
+    genres: ['Drama', 'Comedy'],
+    tagline: 'Make your move.',
+    overview: 'At Kendall\'s lavish birthday bash, Shiv and Roman try to arrange a meeting with Lukas Matsson, a tech mogul who recently snubbed Logan.',
+    vote_average: 8.3,
     cast: [
-      { name: 'Brian Cox',          character: 'Logan Roy' },
-      { name: 'Jeremy Strong',      character: 'Kendall Roy' },
-      { name: 'Sarah Snook',        character: 'Siobhan Roy' },
-      { name: 'Matthew Macfadyen',  character: 'Tom Wambsgans' },
-      { name: 'Kieran Culkin',      character: 'Roman Roy' },
+      { name: 'Jeremy Strong',      character: 'Kendall Roy',         profile_url: 'https://image.tmdb.org/t/p/w185/jcMhXWICSi4QjQttJVhFSiKVvpF.jpg' },
+      { name: 'Kieran Culkin',      character: 'Roman Roy',           profile_url: 'https://image.tmdb.org/t/p/w185/b5EC4nziLhBRX4GOcYx2BdS3FTt.jpg' },
+      { name: 'Sarah Snook',        character: 'Siobhan \'Shiv\' Roy', profile_url: 'https://image.tmdb.org/t/p/w185/6aHeil5eCT0a1islyD3F93WsKm6.jpg' },
+      { name: 'Brian Cox',          character: 'Logan Roy',           profile_url: 'https://image.tmdb.org/t/p/w185/scSjbFCTRngXlkJRoKptM5kQGw7.jpg' },
+      { name: 'Matthew Macfadyen',  character: 'Tom Wambsgans',       profile_url: 'https://image.tmdb.org/t/p/w185/sFaIfkykJdftwrc3BdEfpdg2mYW.jpg' },
     ],
-    tomatometer: 97, audience_score: 95,
+    tomatometer: 95, audience_score: null,
     rt_url: 'https://www.rottentomatoes.com/tv/succession',
-    imdb_id: 'tt7660850', imdb_rating: '8.9',
+    imdb_id: 'tt7660850', imdb_rating: '8.8',
   },
 };
 
@@ -121,7 +120,6 @@ export function installDemoMock(): void {
       return originalFetch(input, init);
     }
 
-    // Abort immediately if caller already cancelled
     if (init?.signal?.aborted) {
       return Promise.reject(new DOMException('Aborted', 'AbortError'));
     }
@@ -141,10 +139,10 @@ export function installDemoMock(): void {
           year: c.year,
           runtime: c.runtime,
           vote_average: c.vote_average,
-          cast: c.cast.map(m => ({ ...m, profile_url: null })),
-          poster_url: c.poster,
-          fullsize_url: c.fullsize,
-          backdrop_url: c.backdrop,
+          cast: c.cast,
+          poster_url: c.poster_url,
+          fullsize_url: c.fullsize_url,
+          backdrop_url: c.backdrop_url,
         }));
       }
       return Promise.resolve(json({ available: false }));
@@ -154,7 +152,7 @@ export function installDemoMock(): void {
     if (path === '/api/tmdb') {
       const c = matchContent(params);
       return Promise.resolve(json(c
-        ? { poster_url: c.poster, fullsize_url: c.fullsize }
+        ? { poster_url: c.poster_url, fullsize_url: c.fullsize_url }
         : { poster_url: null, fullsize_url: null }
       ));
     }
@@ -178,7 +176,7 @@ export function installDemoMock(): void {
       return Promise.resolve(new Response(null, { status: 404 }));
     }
 
-    // Anything else — return empty object rather than hanging
+    // Anything else (controls, etc.) — return empty object rather than hanging
     return Promise.resolve(json({}));
   };
 }
